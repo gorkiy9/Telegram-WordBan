@@ -1,0 +1,73 @@
+# Word Ban: hide a word you don't want to read in a chat
+
+Some words you would rather not see: a colleague's endless "deadline", a spoiler, a name, a slur. Word Ban lets you
+ban a word in one chat, for yourself only. Incoming messages with it keep coming, but the word is hidden under a
+spoiler or replaced with your own text or emoji. The sender and the server know nothing about it.
+
+> Preliminary demo. The demo video is not recorded yet.
+
+## What it does
+
+### 1. Ban a word from a message
+
+Long-press an incoming message, select the word, and choose **Ban a Word** in the selection menu.
+
+### 2. The ban sheet
+
+- The word, large, so it is clear what is being banned.
+- A horizontal selector of how messages show it:
+  - **Visible**: the word is not banned (picking it for a banned word lifts the ban);
+  - **Spoiler**: the word hides under Telegram's spoiler dust, a tap reveals it;
+  - **Replace**: a field appears for your own text or emoji to show instead.
+- At the bottom, **Ban Word** and, to its right, how long the ban lasts: 1 Day, 1 Week, 1 Month, 3 Months, 6 Months,
+  1 Year or Forever.
+- After the ban, a toast with Undo.
+
+### 3. Messages with a banned word
+
+- Every incoming message in the chat with the word (whole word, any case) hides or replaces it at once, old messages
+  included.
+- The message's status line says **banned word**, next to the time, the way it says "edited".
+- The message's context menu has **Show Word** (for this message; **Hide Word** puts it back) and **Unban "word"**.
+
+## How it works
+
+- **Built from the client.** The sheet is `SheetComponent` with `TabSelectorComponent`, `ListTextFieldItemComponent`,
+  `ButtonComponent` and `GlassBarButtonComponent`; the duration picker is the regular context menu, the hiding is the
+  existing spoiler entity, toasts are `UndoOverlayController`. Colours and fonts come from `PresentationTheme`.
+- **Display only.** `ChatMessageTextBubbleContentNode` applies the chat's bans to an incoming message's text before
+  layout (`wordBanApply`: a spoiler entity over the word, or the replacement with entity ranges shifted). The stored
+  message is never changed; copy, reply and forward use the original text.
+- **No server changes.** Bans are kept on the device (`WordBanStore`, `UserDefaults`), per chat, with an end date. A real
+  version would sync them across devices:
+
+  | Feature | Needed API |
+  | --- | --- |
+  | Bans per chat, synced | `messages.getWordBans(peer)`, `messages.setWordBan(peer, word, mode, replacement, until)`, `messages.deleteWordBan(peer, word)` |
+  | Bans on other devices | `updateWordBans(peer)` |
+
+- **The demo build.** The demo is recorded on a separate offline build, so no real data can reach it. It is on only when
+  the bundle id contains `WordBanDemo` (`isWordBanDemoBuild`): the app signs in to a local account without a server,
+  points all data centres at a closed local port, and fills the chats from `TelegramUI/Sources/WordBanDemo.swift`.
+  Launching with `-WordBanDemoReset YES` restores the chats and clears every ban. A regular build never enables any of
+  this.
+
+## Applying the change
+
+`changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
+checkout of that commit (25 files, +1 392 −5):
+
+```
+git apply --check changes.patch
+git apply changes.patch
+```
+
+Key files: `submodules/TelegramUI/Components/Chat/ChatWordBan/` (store and matching),
+`submodules/TelegramUI/Components/Chat/WordBanScreen/` (the sheet), `ChatControllerWordBan.swift` and
+`ChatInterfaceStateContextMenus.swift` in `submodules/TelegramUI/Sources/`, the selection menu item in
+`TextSelectionNode.swift`, and the display in `ChatMessageTextBubbleContentNode.swift`.
+
+## Limitations
+
+- Bans live on one device.
+- Only the message bubble is filtered: the chat list preview, notifications and reply quotes still show the word.

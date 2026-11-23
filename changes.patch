@@ -1,0 +1,1725 @@
+diff --git a/Telegram/Telegram-iOS/en.lproj/Localizable.strings b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
+index 0c6e4e28f1..73655177ba 100644
+--- a/Telegram/Telegram-iOS/en.lproj/Localizable.strings
++++ b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
+@@ -17342,3 +17342,29 @@ Error: %8$@";
+ "VoiceOver.Reactions.ShowAll" = "Show All Reactions";
+ "VoiceOver.Reactions.Premium" = "Premium Reactions";
+ "VoiceOver.Passcode.Incorrect" = "Incorrect passcode. Please try again.";
++
++"WordBan.ContextMenuBan" = "Ban a Word";
++"WordBan.StatusLabel" = "banned word";
++"WordBan.Title" = "Ban a Word";
++"WordBan.Mode.Visible" = "Visible";
++"WordBan.Mode.Spoiler" = "Spoiler";
++"WordBan.Mode.Replace" = "Replace";
++"WordBan.Info.Visible" = "Incoming messages in this chat show the word as it is.";
++"WordBan.Info.Spoiler" = "Incoming messages in this chat hide the word under a spoiler. Only you see this.";
++"WordBan.Info.Replace" = "Incoming messages in this chat show your text or emoji instead of the word. Only you see this.";
++"WordBan.ReplacePlaceholder" = "Text or emoji";
++"WordBan.Ban" = "Ban Word";
++"WordBan.Save" = "Save";
++"WordBan.Unban" = "Unban Word";
++"WordBan.Duration.Day" = "1 Day";
++"WordBan.Duration.Week" = "1 Week";
++"WordBan.Duration.Month" = "1 Month";
++"WordBan.Duration.3Months" = "3 Months";
++"WordBan.Duration.6Months" = "6 Months";
++"WordBan.Duration.Year" = "1 Year";
++"WordBan.Duration.Forever" = "Forever";
++"WordBan.Toast.Banned" = "“%@” is banned in this chat";
++"WordBan.Toast.Unbanned" = "“%@” is no longer banned";
++"WordBan.ContextMenu.Show" = "Show Word";
++"WordBan.ContextMenu.Hide" = "Hide Word";
++"WordBan.ContextMenu.Unban" = "Unban “%@”";
+diff --git a/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift b/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift
+index d3c142b279..20792cfb3a 100644
+--- a/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift
++++ b/submodules/AuthorizationUI/Sources/AuthorizationSequenceController.swift
+@@ -100,6 +100,11 @@ public final class AuthorizationSequenceController: NavigationController, ASAuth
+             self?.updateState(state: state)
+         }).strict()
+         
++        if isWordBanDemoBuild {
++            // The word ban demo build has no sign-in: it creates its local account at once.
++            let _ = wordBanDemoSignInOffline(accountManager: sharedContext.accountManager, account: account).start()
++        }
++
+         self.applicationStateDisposable = (self.sharedContext.applicationBindings.applicationIsActive
+         |> deliverOnMainQueue).start(next: { [weak self] isActive in
+             guard let self else {
+diff --git a/submodules/GalleryUI/Sources/ChatItemGalleryFooterContentNode.swift b/submodules/GalleryUI/Sources/ChatItemGalleryFooterContentNode.swift
+index cf7dbaed3d..a86f556431 100644
+--- a/submodules/GalleryUI/Sources/ChatItemGalleryFooterContentNode.swift
++++ b/submodules/GalleryUI/Sources/ChatItemGalleryFooterContentNode.swift
+@@ -520,6 +520,8 @@ final class ChatItemGalleryFooterContentNode: GalleryFooterContentNode, ASScroll
+                 let shareController = self.context.sharedContext.makeShareScreen(context: self.context, params: ShareControllerParams(subject: .text(text.string), externalShare: true, immediateExternalShare: false, updatedPresentationData: updatedPresentationData))
+ 
+                 self.controllerInteraction?.presentController(shareController, nil)
++            case .banWord:
++                break
+             case .lookup:
+                 let controller = UIReferenceLibraryViewController(term: text.string)
+                 if let window = self.controllerInteraction?.controller()?.view.window {
+diff --git a/submodules/TelegramCore/Sources/Account/Account.swift b/submodules/TelegramCore/Sources/Account/Account.swift
+index 510cb79180..27df312e4c 100644
+--- a/submodules/TelegramCore/Sources/Account/Account.swift
++++ b/submodules/TelegramCore/Sources/Account/Account.swift
+@@ -301,6 +301,8 @@ public enum AccountResult {
+ }
+ 
+ public func accountWithId(accountManager: AccountManager<TelegramAccountManagerTypes>, networkArguments: NetworkInitializationArguments, id: AccountRecordId, encryptionParameters: ValueBoxEncryptionParameters, supplementary: Bool, isSupportUser: Bool, rootPath: String, beginWithTestingEnvironment: Bool, backupData: AccountBackupData?, auxiliaryMethods: AccountAuxiliaryMethods, shouldKeepAutoConnection: Bool = true) -> Signal<AccountResult, NoError> {
++    // The word ban demo build stays in the test environment, so no real account can show up in the demo video.
++    let beginWithTestingEnvironment = beginWithTestingEnvironment || isWordBanDemoBuild
+     let path = "\(rootPath)/\(accountRecordIdPathName(id))"
+     
+     let postbox = openPostbox(
+@@ -1287,6 +1289,10 @@ public class Account {
+     
+     private let networkStateValue = Promise<AccountNetworkState>(.waitingForNetwork)
+     public var networkState: Signal<AccountNetworkState, NoError> {
++        if isWordBanDemoBuild {
++            // The offline demo never connects; its screens show the online state.
++            return .single(.online(proxy: nil))
++        }
+         return self.networkStateValue.get()
+     }
+     
+diff --git a/submodules/TelegramCore/Sources/Network/Network.swift b/submodules/TelegramCore/Sources/Network/Network.swift
+index d0a36f610d..2c36cf8392 100644
+--- a/submodules/TelegramCore/Sources/Network/Network.swift
++++ b/submodules/TelegramCore/Sources/Network/Network.swift
+@@ -628,7 +628,10 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
+             }
+             
+             for (id, ips) in seedAddressList {
+-                context.setSeedAddressSetForDatacenterWithId(id, seedAddressSet: MTDatacenterAddressSet(addressList: ips.map { MTDatacenterAddress(ip: $0, port: 443, preferForMedia: false, restrictToTcp: false, cdn: false, preferForProxy: false, secret: nil) }))
++                // The word ban demo build is offline: every datacenter points at a closed local port, so nothing ever
++                // reaches a server and no server can sign the local demo account out.
++                let addresses = isWordBanDemoBuild ? ["127.0.0.1"] : ips
++                context.setSeedAddressSetForDatacenterWithId(id, seedAddressSet: MTDatacenterAddressSet(addressList: addresses.map { MTDatacenterAddress(ip: $0, port: isWordBanDemoBuild ? 9 : 443, preferForMedia: false, restrictToTcp: false, cdn: false, preferForProxy: false, secret: nil) }))
+             }
+             
+             context.keychain = keychain
+@@ -659,7 +662,9 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
+             #endif
+             
+             if !supplementary {
+-                context.setDiscoverBackupAddressListSignal(MTBackupAddressSignals.fetchBackupIps(testingEnvironment, currentContext: context, additionalSource: wrappedAdditionalSource, phoneNumber: phoneNumber, mainDatacenterId: datacenterId))
++                if !isWordBanDemoBuild {
++                    context.setDiscoverBackupAddressListSignal(MTBackupAddressSignals.fetchBackupIps(testingEnvironment, currentContext: context, additionalSource: wrappedAdditionalSource, phoneNumber: phoneNumber, mainDatacenterId: datacenterId))
++                }
+                 let externalRequestVerificationStream = arguments.externalRequestVerificationStream
+                 context.setExternalRequestVerification({ nonce in
+                     return MTSignal(generator: { subscriber in
+@@ -702,6 +707,10 @@ func initializedNetwork(accountId: AccountRecordId, arguments: NetworkInitializa
+             #endif*/
+             
+             var rustDisabledReason = networkEngineRustDisabledReason(appConfiguration: appConfiguration, engineState: networkEngine.state, appVersion: arguments.appVersion, timestamp: Int32(Date().timeIntervalSince1970))
++            if isWordBanDemoBuild && rustDisabledReason == nil {
++                // The offline demo relies on MtProtoKit's address list above.
++                rustDisabledReason = "word ban demo build"
++            }
+             #if os(macOS)
+             if rustDisabledReason == nil {
+                 rustDisabledReason = networkLivenessDisabledReason()
+diff --git a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+index b4d7bb4b12..3eddd81116 100644
+--- a/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
++++ b/submodules/TelegramCore/Sources/PendingMessages/EnqueueMessage.swift
+@@ -760,7 +760,11 @@ private func opportunisticallyTransformOutgoingMedia(network: Network, postbox:
+ 
+ public func enqueueMessages(account: Account, peerId: PeerId, messages: [EnqueueMessage]) -> Signal<[MessageId?], NoError> {
+     let signal: Signal<[(Bool, EnqueueMessage)], NoError>
+-    if let transformOutgoingMessageMedia = account.transformOutgoingMessageMedia {
++    // The word ban demo's chats store messages as sent: their media needs no upload preparation, which in the offline
++    // demo build would wait for a network that never comes.
++    if isWordBanDemoPeer(peerId) {
++        signal = .single(messages.map { (false, $0) })
++    } else if let transformOutgoingMessageMedia = account.transformOutgoingMessageMedia {
+         signal = opportunisticallyTransformOutgoingMedia(network: account.network, postbox: account.postbox, transformOutgoingMessageMedia: transformOutgoingMessageMedia, messages: messages, userInteractive: true)
+     } else {
+         signal = .single(messages.map { (false, $0) })
+@@ -1018,7 +1022,9 @@ func enqueueMessages(transaction: Transaction, account: Account, peerId: PeerId,
+ 
+             var attributes: [MessageAttribute] = []
+             var flags = StoreMessageFlags()
+-            flags.insert(.Unsent)
++            if !isWordBanDemoPeer(peerId) {
++                flags.insert(.Unsent)
++            }
+             
+             var randomId: Int64 = 0
+             arc4random_buf(&randomId, 8)
+diff --git a/submodules/TelegramCore/Sources/State/Holes.swift b/submodules/TelegramCore/Sources/State/Holes.swift
+index 0c03828fbe..ea7b5f96c6 100644
+--- a/submodules/TelegramCore/Sources/State/Holes.swift
++++ b/submodules/TelegramCore/Sources/State/Holes.swift
+@@ -427,6 +427,16 @@ struct FetchMessageHistoryHoleResult: Equatable {
+ func fetchMessageHistoryHole(accountPeerId: PeerId, source: FetchMessageHistoryHoleSource, postbox: Postbox, peerInput: FetchMessageHistoryHoleThreadInput, namespace: MessageId.Namespace, direction: MessageHistoryViewRelativeHoleDirection, space: MessageHistoryHoleOperationSpace, count rawCount: Int, pendingReferences: PendingMessageReferences? = nil) -> Signal<FetchMessageHistoryHoleResult?, NoError> {
+     let count = min(100, rawCount)
+     
++    if case let .direct(peerId, _) = peerInput, isWordBanDemoPeer(peerId) {
++        // The word ban demo's chats are local: their history has nothing to fetch.
++        return postbox.transaction { transaction -> FetchMessageHistoryHoleResult? in
++            let range: ClosedRange<MessageId.Id> = 1 ... (Int32.max - 1)
++            transaction.removeHole(peerId: peerId, threadId: nil, namespace: namespace, space: space, range: range)
++            let indices = IndexSet(integersIn: Int(range.lowerBound) ... Int(range.upperBound))
++            return FetchMessageHistoryHoleResult(removedIndices: indices, strictRemovedIndices: indices, actualPeerId: peerId, actualThreadId: nil, ids: [])
++        }
++    }
++    
+     return postbox.stateView()
+     |> mapToSignal { view -> Signal<AuthorizedAccountState, NoError> in
+         if let state = view.state as? AuthorizedAccountState {
+diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/WordBanDemo.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/WordBanDemo.swift
+new file mode 100644
+index 0000000000..27538546fe
+--- /dev/null
++++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/WordBanDemo.swift
+@@ -0,0 +1,171 @@
++import Foundation
++import Postbox
++import SwiftSignalKit
++
++/// Word ban concept: the build used to record the demo video. It is a separate app (its bundle id contains
++/// "WordBanDemo", so it has its own data container and never sees the regular app's account). It never connects to a
++/// server: the account, its chats and their messages are local stand-ins that exist on this device only.
++public let isWordBanDemoBuild: Bool = {
++    guard let bundleId = Bundle.main.bundleIdentifier else {
++        return false
++    }
++    return bundleId.contains("WordBanDemo")
++}()
++
++private let wordBanDemoPeerIdBase: Int64 = 1_099_511_627_100
++private let wordBanDemoPeerIdCount: Int64 = 100
++
++/// The demo's local users and groups: ids the server never assigns to real peers in this account.
++public func wordBanDemoPeerId(index: Int, isGroup: Bool) -> EnginePeer.Id {
++    return PeerId(namespace: isGroup ? Namespaces.Peer.CloudGroup : Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(wordBanDemoPeerIdBase + Int64(index)))
++}
++
++/// A demo peer: its history is local, and messages sent to it are stored as delivered.
++func isWordBanDemoPeer(_ peerId: PeerId) -> Bool {
++    guard isWordBanDemoBuild else {
++        return false
++    }
++    guard peerId.namespace == Namespaces.Peer.CloudUser || peerId.namespace == Namespaces.Peer.CloudGroup else {
++        return false
++    }
++    let value = peerId.id._internalGetInt64Value()
++    return value >= wordBanDemoPeerIdBase && value < wordBanDemoPeerIdBase + wordBanDemoPeerIdCount
++}
++
++/// What the demo puts in the account: its chats and their messages.
++public struct WordBanDemoSeed {
++    public enum PeerKind {
++        case user(firstName: String, lastName: String?)
++        case group(title: String, memberCount: Int)
++    }
++
++    public struct Peer {
++        public let id: EnginePeer.Id
++        public let kind: PeerKind
++        /// Unread incoming messages the chat list shows.
++        public let unreadCount: Int32
++
++        public init(id: EnginePeer.Id, kind: PeerKind, unreadCount: Int32 = 0) {
++            self.id = id
++            self.kind = kind
++            self.unreadCount = unreadCount
++        }
++    }
++
++    public struct Message {
++        public let peerId: EnginePeer.Id
++        public let id: Int32
++        /// Nil: sent by the account.
++        public let authorId: EnginePeer.Id?
++        public let timestamp: Int32
++        public let text: String
++
++        public init(peerId: EnginePeer.Id, id: Int32, authorId: EnginePeer.Id?, timestamp: Int32, text: String) {
++            self.peerId = peerId
++            self.id = id
++            self.authorId = authorId
++            self.timestamp = timestamp
++            self.text = text
++        }
++    }
++
++    public let peers: [Peer]
++    public let messages: [Message]
++
++    public init(peers: [Peer], messages: [Message]) {
++        self.peers = peers
++        self.messages = messages
++    }
++}
++
++public extension TelegramEngine.Messages {
++    /// Writes the demo's chats from scratch: earlier demo messages (also those sent while recording) are dropped, so every
++    /// take starts from the same state. Chats that are not the demo's leave the chat list.
++    func seedWordBanDemo(_ seed: WordBanDemoSeed) -> Signal<Never, NoError> {
++        guard isWordBanDemoBuild else {
++            return .complete()
++        }
++        let accountPeerId = self.account.peerId
++        return self.account.postbox.transaction { transaction -> Void in
++            var peers: [Peer] = []
++            for peer in seed.peers {
++                switch peer.kind {
++                case let .user(firstName, lastName):
++                    peers.append(TelegramUser(id: peer.id, accessHash: nil, firstName: firstName, lastName: lastName, username: nil, phone: nil, photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil))
++                case let .group(title, memberCount):
++                    peers.append(TelegramGroup(id: peer.id, title: title, photo: [], participantCount: memberCount, role: .member, membership: .Member, flags: [], defaultBannedRights: nil, migrationReference: nil, creationDate: 0, version: 0))
++                }
++            }
++            transaction.updatePeersInternal(peers, update: { _, updated in
++                return updated
++            })
++
++            // The demo is offline: the chat lists have nothing to load from a server.
++            for groupId in [PeerGroupId.root, Namespaces.PeerGroup.archive] {
++                for hole in transaction.allChatListHoles(groupId: groupId) {
++                    transaction.replaceChatListHole(groupId: groupId, index: hole.index, hole: nil)
++                }
++            }
++
++            // Everything already in the chat list that is not the demo's leaves it.
++            let demoPeerIds = Set(seed.peers.map(\.id))
++            for peerId in transaction.getChatListPeers(groupId: .root, filterPredicate: nil, additionalFilter: nil).map(\.id) where !demoPeerIds.contains(peerId) {
++                transaction.updatePeerChatListInclusion(peerId, inclusion: .notIncluded)
++            }
++
++            for peer in seed.peers {
++                transaction.clearHistory(peer.id, threadId: nil, minTimestamp: nil, maxTimestamp: nil, namespaces: .all, forEachMedia: nil)
++                transaction.removeHole(peerId: peer.id, threadId: nil, namespace: Namespaces.Message.Cloud, space: .everywhere, range: 1 ... (Int32.max - 1))
++                if peer.id.namespace == Namespaces.Peer.CloudUser {
++                    // A user chat waits for the profile's business intro; the server has no profile for these peers.
++                    transaction.updatePeerCachedData(peerIds: Set([peer.id]), update: { _, current in
++                        let cachedData = (current as? CachedUserData) ?? CachedUserData()
++                        return cachedData.withUpdatedBusinessIntro(nil)
++                    })
++                }
++            }
++
++            var storeMessages: [StoreMessage] = []
++            for message in seed.messages {
++                let isIncoming = message.authorId != nil
++                let (tags, globalTags) = tagsForStoreMessage(incoming: isIncoming, attributes: [], media: [], textEntities: nil, isPinned: false)
++                storeMessages.append(StoreMessage(id: MessageId(peerId: message.peerId, namespace: Namespaces.Message.Cloud, id: message.id), customStableId: nil, globallyUniqueId: nil, groupingKey: nil, threadId: nil, timestamp: message.timestamp, flags: isIncoming ? [.Incoming] : [], tags: tags, globalTags: globalTags, localTags: [], forwardInfo: nil, authorId: message.authorId ?? accountPeerId, text: message.text, attributes: [], media: []))
++            }
++            let _ = transaction.addMessages(storeMessages, location: .UpperHistoryBlock)
++
++            var readStates: [PeerId: [MessageId.Namespace: PeerReadState]] = [:]
++            for peer in seed.peers {
++                let maxId = seed.messages.filter { $0.peerId == peer.id }.map(\.id).max() ?? 0
++                readStates[peer.id] = [Namespaces.Message.Cloud: .idBased(maxIncomingReadId: max(0, maxId - peer.unreadCount), maxOutgoingReadId: maxId, maxKnownId: maxId, count: peer.unreadCount, markedUnread: false)]
++                transaction.updatePeerChatListInclusion(peer.id, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
++            }
++            transaction.resetIncomingReadStates(readStates)
++        }
++        |> ignoreValues
++    }
++}
++
++/// The demo build's own account: local only, never signed in anywhere.
++public let wordBanDemoAccountPeerId = PeerId(namespace: Namespaces.Peer.CloudUser, id: PeerId.Id._internalFromInt64Value(1_099_511_627_050))
++
++/// Signs the demo build in without a server: the account is Alex Morgan, stored on this device only. The demo's
++/// network points at a closed local port (`initializedNetwork`), so nothing can sign it out again.
++public func wordBanDemoSignInOffline(accountManager: AccountManager<TelegramAccountManagerTypes>, account: UnauthorizedAccount) -> Signal<Never, NoError> {
++    guard isWordBanDemoBuild else {
++        return .complete()
++    }
++    return account.postbox.transaction { transaction -> Void in
++        let user = TelegramUser(id: wordBanDemoAccountPeerId, accessHash: nil, firstName: "Alex", lastName: "Morgan", username: "alexmorgan", phone: "15550100000", photo: [], botInfo: nil, restrictionInfo: nil, flags: [], emojiStatus: nil, usernames: [], storiesHidden: nil, nameColor: nil, backgroundEmojiId: nil, profileColor: nil, profileBackgroundEmojiId: nil, subscriberCount: nil, verificationIconFileId: nil)
++        transaction.updatePeersInternal([user], update: { _, updated in
++            return updated
++        })
++        initializedAppSettingsAfterLogin(transaction: transaction, appVersion: account.networkArguments.appVersion, syncContacts: false)
++        transaction.setState(AuthorizedAccountState(isTestingEnvironment: true, masterDatacenterId: 2, peerId: wordBanDemoAccountPeerId, state: nil, invalidatedChannels: []))
++    }
++    |> mapToSignal { _ -> Signal<Void, NoError> in
++        return accountManager.transaction { transaction -> Void in
++            switchToAuthorizedAccount(transaction: transaction, account: account, isSupportUser: false)
++        }
++    }
++    |> ignoreValues
++}
+diff --git a/submodules/TelegramUI/BUILD b/submodules/TelegramUI/BUILD
+index 116004c3e5..6242fafb3f 100644
+--- a/submodules/TelegramUI/BUILD
++++ b/submodules/TelegramUI/BUILD
+@@ -285,6 +285,8 @@ swift_library(
+         "//submodules/ChatMessageBackground:ChatMessageBackground",
+         "//submodules/PeerInfoUI/CreateExternalMediaStreamScreen:CreateExternalMediaStreamScreen",
+         "//submodules/TranslateUI:TranslateUI",
++        "//submodules/TelegramUI/Components/Chat/ChatWordBan",
++        "//submodules/TelegramUI/Components/Chat/WordBanScreen",
+         "//submodules/BrowserUI:BrowserUI",
+         "//submodules/PremiumUI:PremiumUI",
+         "//submodules/Components/HierarchyTrackingLayer:HierarchyTrackingLayer",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
+index c0c2f2abaa..027533af54 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/BUILD
+@@ -37,6 +37,7 @@ swift_library(
+         "//submodules/TelegramUI/Components/Chat/MessageQuoteComponent",
+         "//submodules/TelegramUI/Components/TextLoadingEffect",
+         "//submodules/TelegramUI/Components/ChatControllerInteraction",
++        "//submodules/TelegramUI/Components/Chat/ChatWordBan",
+         "//submodules/TelegramUI/Components/InteractiveTextComponent",
+         "//submodules/TelegramUI/Components/ShimmeringMask",
+         "//submodules/TelegramUI/Components/StreamingTextReveal:StreamingTextReveal",
+diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+index 8652b352c5..ee2bbeafe6 100644
+--- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
++++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
+@@ -28,6 +28,7 @@ import InteractiveTextComponent
+ import ShimmeringMask
+ import StreamingTextReveal
+ import WalletContext
++import ChatWordBan
+ 
+ private final class CachedChatMessageText {
+     let text: String
+@@ -294,7 +295,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                 } else {
+                     dateFormat = .regular
+                 }
+-                let dateText = stringForMessageTimestampStatus(context: item.context, message: EngineMessage(item.message), dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings, format: dateFormat, associatedData: item.associatedData)
++                var dateText = stringForMessageTimestampStatus(context: item.context, message: EngineMessage(item.message), dateTimeFormat: item.presentationData.dateTimeFormat, nameDisplayOrder: item.presentationData.nameDisplayOrder, strings: item.presentationData.strings, format: dateFormat, associatedData: item.associatedData)
+                 
+                 let statusType: ChatMessageDateAndStatusType?
+                 var displayStatus = false
+@@ -427,6 +428,16 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                     }
+                 }
+                 
++                // Words the user banned in this chat: hidden under a spoiler or replaced, until the user shows them for
++                // this message. The status line says that the message has one, the way it says "edited".
++                if incoming && invoice == nil && story == nil && !item.presentationData.isPreview && !WordBanStore.shared.isRevealed(messageId: item.message.id) {
++                    let wordBanRules = WordBanStore.shared.rules(peerId: item.message.id.peerId)
++                    if !wordBanRules.isEmpty, let applied = wordBanApply(text: rawText, entities: messageEntities, rules: wordBanRules) {
++                        rawText = applied.text
++                        messageEntities = applied.entities
++                        dateText = item.presentationData.strings.WordBan_StatusLabel + " " + dateText
++                    }
++                }
+                 
+                 if incoming && item.associatedData.isSuspiciousPeer, let entities = messageEntities {
+                     messageEntities = entities.filter(\.isShownFromSuspiciousPeer)
+@@ -1679,6 +1690,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                 }
+                 
+                 textSelectionNode.enableQuote = enableQuote
++                textSelectionNode.enableBanWord = item.message.effectivelyIncoming(item.context.account.peerId) && !item.message.text.isEmpty && (item.message.id.peerId.namespace == Namespaces.Peer.CloudUser || item.message.id.peerId.namespace == Namespaces.Peer.CloudGroup || item.message.id.peerId.namespace == Namespaces.Peer.CloudChannel)
+                 textSelectionNode.enableTranslate = enableOtherActions
+                 textSelectionNode.enableShare = enableOtherActions && enableCopy
+                 textSelectionNode.menuSkipCoordnateConversion = !enableOtherActions
+diff --git a/submodules/TelegramUI/Components/Chat/ChatWordBan/BUILD b/submodules/TelegramUI/Components/Chat/ChatWordBan/BUILD
+new file mode 100644
+index 0000000000..8a83a9581b
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Chat/ChatWordBan/BUILD
+@@ -0,0 +1,19 @@
++load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
++
++swift_library(
++    name = "ChatWordBan",
++    module_name = "ChatWordBan",
++    srcs = glob([
++        "Sources/**/*.swift",
++    ]),
++    copts = [
++        "-warnings-as-errors",
++    ],
++    deps = [
++        "//submodules/TelegramCore",
++        "//submodules/SSignalKit/SwiftSignalKit",
++    ],
++    visibility = [
++        "//visibility:public",
++    ],
++)
+diff --git a/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift
+new file mode 100644
+index 0000000000..5ce6b82cec
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift
+@@ -0,0 +1,242 @@
++import Foundation
++import SwiftSignalKit
++import TelegramCore
++
++/// One-sided word ban: a word the user does not want to read in one chat. It only changes how this device shows
++/// incoming messages; the other side and the server know nothing about it.
++public enum WordBanMode: Int32, Codable, Equatable {
++    /// Hidden under the system spoiler (the dust a tap reveals).
++    case spoiler = 1
++    /// Shown as the user's own text or emoji.
++    case replace = 2
++}
++
++/// How long a ban lasts, as the duration picker offers it.
++public enum WordBanDuration: Int32, CaseIterable, Codable, Equatable {
++    case day = 86400
++    case week = 604800
++    case month = 2592000
++    case threeMonths = 7776000
++    case sixMonths = 15552000
++    case year = 31536000
++    case forever = 0
++
++    /// The ban's end as a unix time; nil for a ban without an end.
++    public func expirationTimestamp(from timestamp: Int32) -> Int32? {
++        if case .forever = self {
++            return nil
++        }
++        return timestamp + self.rawValue
++    }
++}
++
++public struct WordBanRule: Codable, Equatable {
++    public var word: String
++    public var mode: WordBanMode
++    public var replacement: String?
++    public var duration: WordBanDuration
++    /// Unix time the ban ends; nil: never.
++    public var expiresAt: Int32?
++
++    public init(word: String, mode: WordBanMode, replacement: String?, duration: WordBanDuration, expiresAt: Int32?) {
++        self.word = word
++        self.mode = mode
++        self.replacement = replacement
++        self.duration = duration
++        self.expiresAt = expiresAt
++    }
++
++    public func isActive(at timestamp: Int32) -> Bool {
++        if let expiresAt = self.expiresAt {
++            return expiresAt > timestamp
++        }
++        return true
++    }
++}
++
++/// A word as the ban stores and matches it: the selection without surrounding spaces and punctuation.
++public func wordBanNormalizedWord(_ text: String) -> String {
++    var trimSet = CharacterSet.whitespacesAndNewlines
++    trimSet.formUnion(.punctuationCharacters)
++    trimSet.formUnion(.symbols)
++    return text.trimmingCharacters(in: trimSet)
++}
++
++/// The bans of every chat. Kept on this device only (`UserDefaults`); the server would need its own storage for them to
++/// follow the account to other devices (see the feature's README). Reads are thread-safe: chat bubbles read the rules
++/// during their off-main layout.
++public final class WordBanStore {
++    public static let shared = WordBanStore()
++
++    private static let storageKey = "WordBan.Rules.v1"
++
++    private let lock = NSLock()
++    private var rulesByPeer: [Int64: [WordBanRule]] = [:]
++    /// Messages whose banned words the user chose to show; for this run of the app only.
++    private var revealedMessageIds = Set<EngineMessage.Id>()
++
++    private let updatedPipe = ValuePipe<EnginePeer.Id>()
++    /// Fires with the chat whose bans changed.
++    public var updated: Signal<EnginePeer.Id, NoError> {
++        return self.updatedPipe.signal()
++    }
++
++    private init() {
++        if let data = UserDefaults.standard.data(forKey: WordBanStore.storageKey), let decoded = try? JSONDecoder().decode([Int64: [WordBanRule]].self, from: data) {
++            self.rulesByPeer = decoded
++        }
++    }
++
++    private func save() {
++        if let data = try? JSONEncoder().encode(self.rulesByPeer) {
++            UserDefaults.standard.set(data, forKey: WordBanStore.storageKey)
++        }
++    }
++
++    private static var now: Int32 {
++        return Int32(Date().timeIntervalSince1970)
++    }
++
++    /// The chat's bans that have not ended.
++    public func rules(peerId: EnginePeer.Id) -> [WordBanRule] {
++        let now = WordBanStore.now
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return (self.rulesByPeer[peerId.toInt64()] ?? []).filter { $0.isActive(at: now) }
++    }
++
++    public func rule(peerId: EnginePeer.Id, word: String) -> WordBanRule? {
++        let key = wordBanNormalizedWord(word).lowercased()
++        return self.rules(peerId: peerId).first(where: { $0.word.lowercased() == key })
++    }
++
++    public func setRule(peerId: EnginePeer.Id, rule: WordBanRule) {
++        self.lock.lock()
++        var rules = self.rulesByPeer[peerId.toInt64()] ?? []
++        rules.removeAll(where: { $0.word.lowercased() == rule.word.lowercased() })
++        rules.append(rule)
++        self.rulesByPeer[peerId.toInt64()] = rules
++        self.save()
++        self.lock.unlock()
++        self.updatedPipe.putNext(peerId)
++    }
++
++    public func removeRule(peerId: EnginePeer.Id, word: String) {
++        let key = wordBanNormalizedWord(word).lowercased()
++        self.lock.lock()
++        var rules = self.rulesByPeer[peerId.toInt64()] ?? []
++        rules.removeAll(where: { $0.word.lowercased() == key })
++        self.rulesByPeer[peerId.toInt64()] = rules.isEmpty ? nil : rules
++        self.save()
++        self.lock.unlock()
++        self.updatedPipe.putNext(peerId)
++    }
++
++    public func removeAll() {
++        self.lock.lock()
++        self.rulesByPeer = [:]
++        self.revealedMessageIds.removeAll()
++        self.save()
++        self.lock.unlock()
++    }
++
++    public func isRevealed(messageId: EngineMessage.Id) -> Bool {
++        self.lock.lock()
++        defer { self.lock.unlock() }
++        return self.revealedMessageIds.contains(messageId)
++    }
++
++    public func setRevealed(messageId: EngineMessage.Id, revealed: Bool) {
++        self.lock.lock()
++        if revealed {
++            self.revealedMessageIds.insert(messageId)
++        } else {
++            self.revealedMessageIds.remove(messageId)
++        }
++        self.lock.unlock()
++    }
++}
++
++/// A banned word as one message contains it.
++public struct WordBanMatch: Equatable {
++    public let rule: WordBanRule
++    /// UTF-16 range in the message text.
++    public let range: NSRange
++}
++
++/// Whole-word, case-insensitive occurrences of the banned words in `text`, in text order.
++public func wordBanMatches(text: String, rules: [WordBanRule]) -> [WordBanMatch] {
++    if text.isEmpty || rules.isEmpty {
++        return []
++    }
++    let nsText = text as NSString
++    var result: [WordBanMatch] = []
++    for rule in rules {
++        let word = wordBanNormalizedWord(rule.word)
++        if word.isEmpty {
++            continue
++        }
++        let pattern = "(?<![\\p{L}\\p{N}_])" + NSRegularExpression.escapedPattern(for: word) + "(?![\\p{L}\\p{N}_])"
++        guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
++            continue
++        }
++        for match in expression.matches(in: text, options: [], range: NSRange(location: 0, length: nsText.length)) {
++            if !result.contains(where: { NSIntersectionRange($0.range, match.range).length > 0 }) {
++                result.append(WordBanMatch(rule: rule, range: match.range))
++            }
++        }
++    }
++    return result.sorted(by: { $0.range.location < $1.range.location })
++}
++
++/// The text a message shows with its banned words applied: spoilers over hidden words, the user's text in place of
++/// replaced ones. Entity ranges move with the replacements. Nil when the text has no banned word.
++public func wordBanApply(text: String, entities: [MessageTextEntity]?, rules: [WordBanRule]) -> (text: String, entities: [MessageTextEntity])? {
++    let matches = wordBanMatches(text: text, rules: rules)
++    if matches.isEmpty {
++        return nil
++    }
++    let result = NSMutableString(string: text)
++    var resultEntities = entities ?? []
++    var spoilerRanges: [Range<Int>] = []
++
++    // From the end, so earlier ranges stay valid while later ones change length.
++    for match in matches.reversed() {
++        let start = match.range.location
++        let end = match.range.location + match.range.length
++        switch match.rule.mode {
++        case .spoiler:
++            spoilerRanges.append(start ..< end)
++        case .replace:
++            let replacement = match.rule.replacement ?? ""
++            let replacementLength = (replacement as NSString).length
++            let delta = replacementLength - match.range.length
++            result.replaceCharacters(in: match.range, with: replacement)
++            resultEntities = resultEntities.compactMap { entity in
++                var entity = entity
++                let lower = entity.range.lowerBound
++                let upper = entity.range.upperBound
++                if upper <= start {
++                    return entity
++                }
++                if lower >= end {
++                    entity.range = (lower + delta) ..< (upper + delta)
++                    return entity
++                }
++                // Overlaps the replaced word: keep what is outside it, the replacement joins the entity.
++                let newLower = lower < start ? lower : start
++                let newUpper = upper > end ? upper + delta : start + replacementLength
++                if newUpper <= newLower {
++                    return nil
++                }
++                entity.range = newLower ..< newUpper
++                return entity
++            }
++            spoilerRanges = spoilerRanges.map { ($0.lowerBound + delta) ..< ($0.upperBound + delta) }
++        }
++    }
++    for range in spoilerRanges {
++        resultEntities.append(MessageTextEntity(range: range, type: .Spoiler))
++    }
++    return (result as String, resultEntities)
++}
+diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/BUILD b/submodules/TelegramUI/Components/Chat/WordBanScreen/BUILD
+new file mode 100644
+index 0000000000..ce745c6681
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/BUILD
+@@ -0,0 +1,37 @@
++load("@build_bazel_rules_swift//swift:swift.bzl", "swift_library")
++
++swift_library(
++    name = "WordBanScreen",
++    module_name = "WordBanScreen",
++    srcs = glob([
++        "Sources/**/*.swift",
++    ]),
++    copts = [
++        "-warnings-as-errors",
++    ],
++    deps = [
++        "//submodules/AsyncDisplayKit",
++        "//submodules/Display",
++        "//submodules/TelegramCore",
++        "//submodules/SSignalKit/SwiftSignalKit",
++        "//submodules/ComponentFlow",
++        "//submodules/Components/ViewControllerComponent",
++        "//submodules/Components/ComponentDisplayAdapters",
++        "//submodules/Components/MultilineTextComponent",
++        "//submodules/Components/BundleIconComponent",
++        "//submodules/Components/SheetComponent",
++        "//submodules/TelegramPresentationData",
++        "//submodules/AccountContext",
++        "//submodules/ContextUI",
++        "//submodules/AppBundle",
++        "//submodules/TelegramUI/Components/ButtonComponent",
++        "//submodules/TelegramUI/Components/GlassBarButtonComponent",
++        "//submodules/TelegramUI/Components/TabSelectorComponent",
++        "//submodules/TelegramUI/Components/ListSectionComponent",
++        "//submodules/TelegramUI/Components/ListTextFieldItemComponent",
++        "//submodules/TelegramUI/Components/Chat/ChatWordBan",
++    ],
++    visibility = [
++        "//visibility:public",
++    ],
++)
+diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
+new file mode 100644
+index 0000000000..6be640c00b
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
+@@ -0,0 +1,618 @@
++import Foundation
++import UIKit
++import Display
++import AsyncDisplayKit
++import TelegramCore
++import SwiftSignalKit
++import AccountContext
++import TelegramPresentationData
++import ComponentFlow
++import ViewControllerComponent
++import SheetComponent
++import MultilineTextComponent
++import BundleIconComponent
++import GlassBarButtonComponent
++import ButtonComponent
++import TabSelectorComponent
++import ListSectionComponent
++import ListTextFieldItemComponent
++import ContextUI
++import AppBundle
++import ChatWordBan
++
++private let replacementFieldTag = GenericComponentViewTag()
++private let replacementMaxLength = 32
++
++/// What the sheet shows for the word: left as is, or banned in one of two ways.
++private enum WordBanOption: Int, Equatable {
++    case visible = 0
++    case spoiler = 1
++    case replace = 2
++
++    init(mode: WordBanMode?) {
++        switch mode {
++        case .none:
++            self = .visible
++        case .spoiler:
++            self = .spoiler
++        case .replace:
++            self = .replace
++        }
++    }
++}
++
++private func durationTitle(_ duration: WordBanDuration, strings: PresentationStrings) -> String {
++    switch duration {
++    case .day:
++        return strings.WordBan_Duration_Day
++    case .week:
++        return strings.WordBan_Duration_Week
++    case .month:
++        return strings.WordBan_Duration_Month
++    case .threeMonths:
++        return strings.WordBan_Duration_3Months
++    case .sixMonths:
++        return strings.WordBan_Duration_6Months
++    case .year:
++        return strings.WordBan_Duration_Year
++    case .forever:
++        return strings.WordBan_Duration_Forever
++    }
++}
++
++private final class WordBanSheetContent: CombinedComponent {
++    typealias EnvironmentType = ViewControllerComponentContainer.Environment
++
++    let context: AccountContext
++    let word: String
++    let initialRule: WordBanRule?
++    let dismiss: () -> Void
++
++    init(context: AccountContext, word: String, initialRule: WordBanRule?, dismiss: @escaping () -> Void) {
++        self.context = context
++        self.word = word
++        self.initialRule = initialRule
++        self.dismiss = dismiss
++    }
++
++    static func ==(lhs: WordBanSheetContent, rhs: WordBanSheetContent) -> Bool {
++        if lhs.context !== rhs.context {
++            return false
++        }
++        if lhs.word != rhs.word {
++            return false
++        }
++        if lhs.initialRule != rhs.initialRule {
++            return false
++        }
++        return true
++    }
++
++    final class State: ComponentState {
++        var option: WordBanOption
++        var replacement: String
++        var duration: WordBanDuration
++        weak var controller: ViewController?
++
++        init(initialRule: WordBanRule?) {
++            // A new ban starts on Spoiler: Visible is the word's state before any ban.
++            self.option = initialRule.flatMap { WordBanOption(mode: $0.mode) } ?? .spoiler
++            self.replacement = initialRule?.replacement ?? ""
++            self.duration = initialRule?.duration ?? .week
++            super.init()
++        }
++
++        func complete() {
++            (self.controller as? WordBanScreen)?.complete(option: self.option, replacement: self.replacement, duration: self.duration)
++        }
++
++        func openDurationMenu(sourceView: UIView, presentationData: PresentationData) {
++            guard let controller = self.controller else {
++                return
++            }
++            var items: [ContextMenuItem] = []
++            for duration in WordBanDuration.allCases {
++                let isSelected = duration == self.duration
++                items.append(.action(ContextMenuActionItem(text: durationTitle(duration, strings: presentationData.strings), icon: { theme in
++                    if isSelected {
++                        return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Check"), color: theme.contextMenu.primaryColor)
++                    } else {
++                        return nil
++                    }
++                }, action: { [weak self] _, f in
++                    f(.default)
++                    guard let self else {
++                        return
++                    }
++                    self.duration = duration
++                    self.updated(transition: .spring(duration: 0.4))
++                })))
++            }
++            let contextController = makeContextController(presentationData: presentationData, source: .reference(WordBanReferenceContentSource(sourceView: sourceView)), items: .single(ContextController.Items(content: .list(items))))
++            controller.present(contextController, in: .window(.root))
++        }
++    }
++
++    func makeState() -> State {
++        return State(initialRule: self.initialRule)
++    }
++
++    static var body: Body {
++        let closeButton = Child(GlassBarButtonComponent.self)
++        let title = Child(MultilineTextComponent.self)
++        let word = Child(MultilineTextComponent.self)
++        let optionSelector = Child(TabSelectorComponent.self)
++        let info = Child(MultilineTextComponent.self)
++        let replacementSection = Child(ListSectionComponent.self)
++        let banButton = Child(ButtonComponent.self)
++        let durationButton = Child(GlassBarButtonComponent.self)
++
++        return { context in
++            let environment = context.environment[ViewControllerComponentContainer.Environment.self].value
++            let component = context.component
++            let theme = environment.theme.withModalBlocksBackground()
++            let strings = environment.strings
++            let state = context.state
++            if state.controller == nil {
++                state.controller = environment.controller()
++            }
++
++            let sideInset: CGFloat = 16.0 + environment.safeInsets.left
++            let textSideInset: CGFloat = 32.0 + environment.safeInsets.left
++
++            let closeButton = closeButton.update(
++                component: GlassBarButtonComponent(
++                    size: CGSize(width: 44.0, height: 44.0),
++                    backgroundColor: nil,
++                    isDark: theme.overallDarkAppearance,
++                    state: .glass,
++                    component: AnyComponentWithIdentity(id: "close", component: AnyComponent(
++                        BundleIconComponent(
++                            name: "Navigation/Close",
++                            tintColor: theme.chat.inputPanel.panelControlColor
++                        )
++                    )),
++                    action: { _ in
++                        component.dismiss()
++                    }
++                ),
++                availableSize: CGSize(width: 44.0, height: 44.0),
++                transition: .immediate
++            )
++            context.add(closeButton
++                .position(CGPoint(x: 16.0 + closeButton.size.width / 2.0, y: 16.0 + closeButton.size.height / 2.0))
++            )
++
++            var contentHeight: CGFloat = 38.0
++
++            let title = title.update(
++                component: MultilineTextComponent(
++                    text: .plain(NSAttributedString(string: strings.WordBan_Title, font: Font.semibold(17.0), textColor: theme.list.itemPrimaryTextColor)),
++                    horizontalAlignment: .center,
++                    maximumNumberOfLines: 1
++                ),
++                availableSize: CGSize(width: context.availableSize.width - sideInset * 2.0 - 60.0, height: CGFloat.greatestFiniteMagnitude),
++                transition: .immediate
++            )
++            context.add(title
++                .position(CGPoint(x: context.availableSize.width / 2.0, y: contentHeight))
++            )
++            contentHeight += 44.0
++
++            // The word itself, large: the user checks at a glance which word the ban is about.
++            let word = word.update(
++                component: MultilineTextComponent(
++                    text: .plain(NSAttributedString(string: component.word, font: Font.bold(34.0), textColor: theme.list.itemPrimaryTextColor)),
++                    horizontalAlignment: .center,
++                    truncationType: .end,
++                    maximumNumberOfLines: 2
++                ),
++                availableSize: CGSize(width: context.availableSize.width - textSideInset * 2.0, height: CGFloat.greatestFiniteMagnitude),
++                transition: .immediate
++            )
++            context.add(word
++                .position(CGPoint(x: context.availableSize.width / 2.0, y: contentHeight + word.size.height / 2.0))
++            )
++            contentHeight += word.size.height + 20.0
++
++            let optionSelector = optionSelector.update(
++                component: TabSelectorComponent(
++                    colors: TabSelectorComponent.Colors(
++                        foreground: theme.list.itemSecondaryTextColor,
++                        selection: theme.list.itemSecondaryTextColor.withMultipliedAlpha(0.15),
++                        simple: true
++                    ),
++                    theme: theme,
++                    style: .glass,
++                    customLayout: TabSelectorComponent.CustomLayout(
++                        font: Font.medium(15.0),
++                        spacing: 8.0
++                    ),
++                    items: [
++                        TabSelectorComponent.Item(id: AnyHashable(WordBanOption.visible.rawValue), title: strings.WordBan_Mode_Visible),
++                        TabSelectorComponent.Item(id: AnyHashable(WordBanOption.spoiler.rawValue), title: strings.WordBan_Mode_Spoiler),
++                        TabSelectorComponent.Item(id: AnyHashable(WordBanOption.replace.rawValue), title: strings.WordBan_Mode_Replace)
++                    ],
++                    selectedId: AnyHashable(state.option.rawValue),
++                    setSelectedId: { [weak state] id in
++                        guard let state, let rawValue = id.base as? Int, let option = WordBanOption(rawValue: rawValue) else {
++                            return
++                        }
++                        if state.option != option {
++                            state.option = option
++                            state.updated(transition: .spring(duration: 0.4))
++                            if option == .replace {
++                                Queue.mainQueue().after(0.05) {
++                                    (state.controller as? WordBanScreen)?.activateReplacementInput()
++                                }
++                            }
++                        }
++                    }
++                ),
++                availableSize: CGSize(width: context.availableSize.width - sideInset * 2.0, height: 100.0),
++                transition: context.transition
++            )
++            context.add(optionSelector
++                .position(CGPoint(x: context.availableSize.width / 2.0, y: contentHeight + optionSelector.size.height / 2.0))
++            )
++            contentHeight += optionSelector.size.height + 14.0
++
++            let infoText: String
++            switch state.option {
++            case .visible:
++                infoText = strings.WordBan_Info_Visible
++            case .spoiler:
++                infoText = strings.WordBan_Info_Spoiler
++            case .replace:
++                infoText = strings.WordBan_Info_Replace
++            }
++            let info = info.update(
++                component: MultilineTextComponent(
++                    text: .plain(NSAttributedString(string: infoText, font: Font.regular(13.0), textColor: theme.list.freeTextColor)),
++                    horizontalAlignment: .center,
++                    maximumNumberOfLines: 0,
++                    lineSpacing: 0.2
++                ),
++                availableSize: CGSize(width: context.availableSize.width - textSideInset * 2.0, height: CGFloat.greatestFiniteMagnitude),
++                transition: .immediate
++            )
++            context.add(info
++                .position(CGPoint(x: context.availableSize.width / 2.0, y: contentHeight + info.size.height / 2.0))
++                .appear(.default(alpha: true))
++                .disappear(.default(alpha: true))
++            )
++            contentHeight += info.size.height + 20.0
++
++            if state.option == .replace {
++                let replacementSection = replacementSection.update(
++                    component: ListSectionComponent(
++                        theme: theme,
++                        style: .glass,
++                        header: nil,
++                        footer: nil,
++                        items: [
++                            AnyComponentWithIdentity(id: 0, component: AnyComponent(ListTextFieldItemComponent(
++                                style: .glass,
++                                theme: theme,
++                                initialText: state.replacement,
++                                resetText: nil,
++                                placeholder: strings.WordBan_ReplacePlaceholder,
++                                characterLimit: replacementMaxLength,
++                                autocapitalizationType: .none,
++                                autocorrectionType: .no,
++                                returnKeyType: .done,
++                                updated: { [weak state] value in
++                                    guard let state else {
++                                        return
++                                    }
++                                    let wasEmpty = state.replacement.isEmpty
++                                    state.replacement = value
++                                    if wasEmpty != value.isEmpty {
++                                        state.updated(transition: .easeInOut(duration: 0.2))
++                                    }
++                                },
++                                onReturn: { [weak state] in
++                                    guard let state, !state.replacement.isEmpty else {
++                                        return
++                                    }
++                                    state.complete()
++                                },
++                                tag: replacementFieldTag
++                            )))
++                        ]
++                    ),
++                    availableSize: CGSize(width: context.availableSize.width - sideInset * 2.0, height: context.availableSize.height),
++                    transition: context.transition
++                )
++                context.add(replacementSection
++                    .position(CGPoint(x: context.availableSize.width / 2.0, y: contentHeight + replacementSection.size.height / 2.0))
++                    .appear(.default(alpha: true))
++                    .disappear(.default(alpha: true))
++                )
++                contentHeight += replacementSection.size.height + 24.0
++            } else {
++                contentHeight += 4.0
++            }
++
++            // Bottom row: the ban button and, to its right, how long the ban lasts.
++            let buttonInsets = ContainerViewLayout.concentricInsets(bottomInset: environment.safeInsets.bottom, innerDiameter: 52.0, sideInset: 30.0)
++            let buttonSpacing: CGFloat = 10.0
++
++            let durationTextColor = theme.list.itemPrimaryTextColor
++            let durationButton = durationButton.update(
++                component: GlassBarButtonComponent(
++                    size: nil,
++                    backgroundColor: nil,
++                    isDark: theme.overallDarkAppearance,
++                    state: .glass,
++                    isEnabled: state.option != .visible,
++                    component: AnyComponentWithIdentity(id: "duration", component: AnyComponent(HStack([
++                        AnyComponentWithIdentity(id: AnyHashable(state.duration.rawValue), component: AnyComponent(MultilineTextComponent(
++                            text: .plain(NSAttributedString(string: durationTitle(state.duration, strings: strings), font: Font.semibold(17.0), textColor: durationTextColor))
++                        ))),
++                        AnyComponentWithIdentity(id: "arrows", component: AnyComponent(BundleIconComponent(
++                            name: "Item List/ExpandableSelectorArrows",
++                            tintColor: durationTextColor
++                        )))
++                    ], spacing: 6.0))),
++                    action: { [weak state] view in
++                        guard let state else {
++                            return
++                        }
++                        state.openDurationMenu(sourceView: view, presentationData: component.context.sharedContext.currentPresentationData.with { $0 })
++                    }
++                ),
++                availableSize: CGSize(width: context.availableSize.width / 2.0, height: 52.0),
++                transition: context.transition
++            )
++            let durationButtonWidth = durationButton.size.width + 14.0
++
++            let buttonTitle: String
++            if state.option == .visible {
++                buttonTitle = component.initialRule != nil ? strings.WordBan_Unban : strings.WordBan_Ban
++            } else {
++                buttonTitle = component.initialRule != nil ? strings.WordBan_Save : strings.WordBan_Ban
++            }
++            var isEnabled = true
++            if state.option == .visible && component.initialRule == nil {
++                isEnabled = false
++            }
++            if state.option == .replace && state.replacement.isEmpty {
++                isEnabled = false
++            }
++            let hasDurationButton = state.option != .visible
++            let banButtonWidth = context.availableSize.width - buttonInsets.left - buttonInsets.right - (hasDurationButton ? durationButtonWidth + buttonSpacing : 0.0)
++            let banButton = banButton.update(
++                component: ButtonComponent(
++                    background: ButtonComponent.Background(
++                        style: .glass,
++                        color: theme.list.itemCheckColors.fillColor,
++                        foreground: theme.list.itemCheckColors.foregroundColor,
++                        pressedColor: theme.list.itemCheckColors.fillColor.withMultipliedAlpha(0.9)
++                    ),
++                    content: AnyComponentWithIdentity(
++                        id: AnyHashable(buttonTitle),
++                        component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: buttonTitle, font: Font.semibold(17.0), textColor: theme.list.itemCheckColors.foregroundColor, paragraphAlignment: .center))))
++                    ),
++                    isEnabled: isEnabled,
++                    action: { [weak state] in
++                        state?.complete()
++                    }
++                ),
++                availableSize: CGSize(width: banButtonWidth, height: 52.0),
++                transition: context.transition
++            )
++            context.add(banButton
++                .position(CGPoint(x: buttonInsets.left + banButton.size.width / 2.0, y: contentHeight + banButton.size.height / 2.0))
++            )
++            context.add(durationButton
++                .position(CGPoint(x: context.availableSize.width - buttonInsets.right - durationButtonWidth / 2.0, y: contentHeight + 26.0))
++                .scale(hasDurationButton ? 1.0 : 0.01)
++                .opacity(hasDurationButton ? 1.0 : 0.0)
++            )
++            contentHeight += 52.0
++
++            if environment.inputHeight > 0.0 {
++                contentHeight += 15.0
++                contentHeight += max(environment.inputHeight, environment.safeInsets.bottom)
++            } else {
++                contentHeight += buttonInsets.bottom
++            }
++
++            return CGSize(width: context.availableSize.width, height: contentHeight)
++        }
++    }
++}
++
++private final class WordBanReferenceContentSource: ContextReferenceContentSource {
++    private weak var sourceView: UIView?
++
++    init(sourceView: UIView) {
++        self.sourceView = sourceView
++    }
++
++    func transitionInfo() -> ContextControllerReferenceViewInfo? {
++        guard let sourceView = self.sourceView else {
++            return nil
++        }
++        return ContextControllerReferenceViewInfo(referenceView: sourceView, contentAreaInScreenSpace: mainWindowScreenBounds, actionsPosition: .top)
++    }
++}
++
++private final class WordBanSheetComponent: CombinedComponent {
++    typealias EnvironmentType = ViewControllerComponentContainer.Environment
++
++    let context: AccountContext
++    let word: String
++    let initialRule: WordBanRule?
++
++    init(context: AccountContext, word: String, initialRule: WordBanRule?) {
++        self.context = context
++        self.word = word
++        self.initialRule = initialRule
++    }
++
++    static func ==(lhs: WordBanSheetComponent, rhs: WordBanSheetComponent) -> Bool {
++        if lhs.context !== rhs.context {
++            return false
++        }
++        if lhs.word != rhs.word {
++            return false
++        }
++        if lhs.initialRule != rhs.initialRule {
++            return false
++        }
++        return true
++    }
++
++    static var body: Body {
++        let sheet = Child(SheetComponent<EnvironmentType>.self)
++        let animateOut = StoredActionSlot(Action<Void>.self)
++
++        return { context in
++            let environment = context.environment[EnvironmentType.self]
++            let controller = environment.controller
++
++            let sheet = sheet.update(
++                component: SheetComponent<EnvironmentType>(
++                    content: AnyComponent<EnvironmentType>(WordBanSheetContent(
++                        context: context.component.context,
++                        word: context.component.word,
++                        initialRule: context.component.initialRule,
++                        dismiss: {
++                            animateOut.invoke(Action { _ in
++                                if let controller = controller() {
++                                    controller.dismiss(completion: nil)
++                                }
++                            })
++                        }
++                    )),
++                    style: .glass,
++                    backgroundColor: .color(environment.theme.list.modalBlocksBackgroundColor),
++                    followContentSizeChanges: true,
++                    clipsContent: true,
++                    isScrollEnabled: false,
++                    animateOut: animateOut
++                ),
++                environment: {
++                    environment
++                    SheetComponentEnvironment(
++                        metrics: environment.metrics,
++                        deviceMetrics: environment.deviceMetrics,
++                        isDisplaying: environment.value.isVisible,
++                        isCentered: environment.presentsFloatingPanels,
++                        hasInputHeight: !environment.inputHeight.isZero,
++                        regularMetricsSize: CGSize(width: 430.0, height: 900.0),
++                        dismiss: { animated in
++                            if animated {
++                                animateOut.invoke(Action { _ in
++                                    if let controller = controller() {
++                                        controller.dismiss(completion: nil)
++                                    }
++                                })
++                            } else {
++                                if let controller = controller() {
++                                    controller.dismiss(completion: nil)
++                                }
++                            }
++                        }
++                    )
++                },
++                availableSize: context.availableSize,
++                transition: context.transition
++            )
++
++            context.add(sheet
++                .position(CGPoint(x: context.availableSize.width / 2.0, y: context.availableSize.height / 2.0))
++            )
++
++            return context.availableSize
++        }
++    }
++}
++
++/// The sheet that bans a word selected in an incoming message: the word, how messages show it (Visible, Spoiler,
++/// Replace) and how long the ban lasts. The ban is local and one-sided (`WordBanStore`).
++public class WordBanScreen: ViewControllerComponentContainer {
++    public enum Result {
++        case banned(WordBanRule)
++        case unbanned(word: String)
++    }
++
++    private let peerId: EnginePeer.Id
++    private let word: String
++    private let initialRule: WordBanRule?
++    private let completion: (Result) -> Void
++
++    public init(context: AccountContext, peerId: EnginePeer.Id, word: String, completion: @escaping (Result) -> Void) {
++        let word = wordBanNormalizedWord(word)
++        let initialRule = WordBanStore.shared.rule(peerId: peerId, word: word)
++        self.peerId = peerId
++        self.word = initialRule?.word ?? word
++        self.initialRule = initialRule
++        self.completion = completion
++
++        super.init(
++            context: context,
++            component: WordBanSheetComponent(context: context, word: initialRule?.word ?? word, initialRule: initialRule),
++            navigationBarAppearance: .none,
++            statusBarStyle: .ignore,
++            theme: .default
++        )
++
++        self.navigationPresentation = .flatModal
++        self.supportedOrientations = ViewControllerSupportedOrientations(regularSize: .all, compactSize: .portrait)
++    }
++
++    required public init(coder aDecoder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    fileprivate func activateReplacementInput() {
++        if let view = self.node.hostView.findTaggedView(tag: replacementFieldTag) as? ListTextFieldItemComponent.View {
++            view.activateInput()
++        }
++    }
++
++    fileprivate func complete(option: WordBanOption, replacement: String, duration: WordBanDuration) {
++        switch option {
++        case .visible:
++            if self.initialRule != nil {
++                WordBanStore.shared.removeRule(peerId: self.peerId, word: self.word)
++                self.completion(.unbanned(word: self.word))
++            }
++        case .spoiler, .replace:
++            let trimmedReplacement = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
++            if option == .replace && trimmedReplacement.isEmpty {
++                if let view = self.node.hostView.findTaggedView(tag: replacementFieldTag) as? ListTextFieldItemComponent.View {
++                    view.animateError()
++                    HapticFeedback().error()
++                }
++                return
++            }
++            let expiresAt: Int32?
++            if let initialRule = self.initialRule, initialRule.duration == duration {
++                expiresAt = initialRule.expiresAt
++            } else {
++                expiresAt = duration.expirationTimestamp(from: Int32(Date().timeIntervalSince1970))
++            }
++            let rule = WordBanRule(
++                word: self.word,
++                mode: option == .spoiler ? .spoiler : .replace,
++                replacement: option == .replace ? trimmedReplacement : nil,
++                duration: duration,
++                expiresAt: expiresAt
++            )
++            WordBanStore.shared.setRule(peerId: self.peerId, rule: rule)
++            self.completion(.banned(rule))
++        }
++        self.dismissAnimated()
++    }
++
++    public func dismissAnimated() {
++        self.view.endEditing(true)
++        if let view = self.node.hostView.findTaggedView(tag: SheetComponent<ViewControllerComponentContainer.Environment>.View.Tag()) as? SheetComponent<ViewControllerComponentContainer.Environment>.View {
++            view.dismissAnimated()
++        }
++    }
++}
+diff --git a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
+index a960aed344..20d215aca8 100644
+--- a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
++++ b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
+@@ -877,6 +877,8 @@ private final class GiftViewSheetContent: CombinedComponent {
+                     )
+                 )
+                 controller.present(shareController, in: .window(.root))
++            case .banWord:
++                break
+             case .lookup:
+                 let lookupController = UIReferenceLibraryViewController(term: text.string)
+                 if let window = controller.view.window {
+diff --git a/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemSetContainerComponent.swift b/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemSetContainerComponent.swift
+index 5a230b1f2c..d43b42703e 100644
+--- a/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemSetContainerComponent.swift
++++ b/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemSetContainerComponent.swift
+@@ -4785,6 +4785,8 @@ public final class StoryItemSetContainerComponent: Component {
+                                 component.controller()?.present(undoController, in: .current)
+                             case .share:
+                                 self.sendMessageContext.performShareTextAction(view: self, text: text.string)
++                            case .banWord:
++                                break
+                             case .lookup:
+                                 self.sendMessageContext.performLookupTextAction(view: self, text: text.string)
+                             case .speak:
+diff --git a/submodules/TelegramUI/Components/TextProcessingScreen/Sources/TextProcessingTextAreaComponent.swift b/submodules/TelegramUI/Components/TextProcessingScreen/Sources/TextProcessingTextAreaComponent.swift
+index 0d9e98d93a..315898fd75 100644
+--- a/submodules/TelegramUI/Components/TextProcessingScreen/Sources/TextProcessingTextAreaComponent.swift
++++ b/submodules/TelegramUI/Components/TextProcessingScreen/Sources/TextProcessingTextAreaComponent.swift
+@@ -496,6 +496,8 @@ final class TextProcessingTextAreaComponent: Component {
+                         case .share:
+                             let shareController = component.context.sharedContext.makeShareScreen(context: component.context, params: ShareControllerParams(subject: .text(text.string)))
+                             component.present(shareController, nil)
++                        case .banWord:
++                            break
+                         case .lookup:
+                             let controller = UIReferenceLibraryViewController(term: text.string)
+                             if let window = self.window {
+diff --git a/submodules/TelegramUI/Components/Wallet/WalletTransactionScreen/Sources/WalletTransactionScreen.swift b/submodules/TelegramUI/Components/Wallet/WalletTransactionScreen/Sources/WalletTransactionScreen.swift
+index 2c5c68e4bb..dd2402aafc 100644
+--- a/submodules/TelegramUI/Components/Wallet/WalletTransactionScreen/Sources/WalletTransactionScreen.swift
++++ b/submodules/TelegramUI/Components/Wallet/WalletTransactionScreen/Sources/WalletTransactionScreen.swift
+@@ -2329,6 +2329,8 @@ private final class WalletTransactionContentComponent: Component {
+                     )
+                 )
+                 controller.present(shareController, in: .window(.root))
++            case .banWord:
++                break
+             case .lookup:
+                 let lookupController = UIReferenceLibraryViewController(term: text.string)
+                 if let window = controller.view.window {
+diff --git a/submodules/TelegramUI/Sources/ChatController.swift b/submodules/TelegramUI/Sources/ChatController.swift
+index f32b3c1644..79a83e1f38 100644
+--- a/submodules/TelegramUI/Sources/ChatController.swift
++++ b/submodules/TelegramUI/Sources/ChatController.swift
+@@ -611,6 +611,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+     public var isSelectingMessagesUpdated: ((Bool) -> Void)?
+     
+     var translationStateDisposable: Disposable?
++    var wordBanDisposable: Disposable?
+     var premiumGiftSuggestionDisposable: Disposable?
+     
+     var currentSpeechHolder: SpeechSynthesizerHolder?
+@@ -4528,6 +4529,8 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+             }
+             
+             switch action {
++            case .banWord:
++                self.presentWordBanScreen(message: message, word: text.string)
+             case .copy:
+                 storeAttributedTextInPasteboard(text)
+             case .share:
+@@ -7271,6 +7274,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+         self.keepMessageCountersSyncrhonizedDisposable?.dispose()
+         self.keepSavedMessagesSyncrhonizedDisposable?.dispose()
+         self.translationStateDisposable?.dispose()
++        self.wordBanDisposable?.dispose()
+         self.premiumGiftSuggestionDisposable?.dispose()
+         self.powerSavingMonitoringDisposable?.dispose()
+         self.saveMediaDisposable?.dispose()
+@@ -7800,6 +7804,7 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
+     
+     override public func loadDisplayNode() {
+         self.loadDisplayNodeImpl()
++        self.wordBanDisposable = self.makeWordBanUpdatesDisposable()
+         self.galleryPresentationContext.view = self.view
+         self.galleryPresentationContext.controllersUpdated = { [weak self] _ in
+             guard let self else {
+diff --git a/submodules/TelegramUI/Sources/ChatControllerWordBan.swift b/submodules/TelegramUI/Sources/ChatControllerWordBan.swift
+new file mode 100644
+index 0000000000..8398d167c9
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/ChatControllerWordBan.swift
+@@ -0,0 +1,80 @@
++import Foundation
++import UIKit
++import Display
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import UndoUI
++import ChatWordBan
++import WordBanScreen
++
++/// One-sided word ban in a chat: "Ban a Word" on a selected word opens the ban sheet, and the chat redraws its messages
++/// whenever the chat's bans change.
++extension ChatControllerImpl {
++    func presentWordBanScreen(message: EngineRawMessage?, word: String) {
++        guard let peerId = message?.id.peerId ?? self.chatLocation.peerId else {
++            return
++        }
++        let normalizedWord = wordBanNormalizedWord(word)
++        if normalizedWord.isEmpty {
++            return
++        }
++        let present: () -> Void = { [weak self] in
++            guard let self else {
++                return
++            }
++            self.chatDisplayNode.dismissInput()
++            let controller = WordBanScreen(context: self.context, peerId: peerId, word: normalizedWord, completion: { [weak self] result in
++                guard let self else {
++                    return
++                }
++                let presentationData = self.presentationData
++                switch result {
++                case let .banned(rule):
++                    self.present(UndoOverlayController(presentationData: presentationData, content: .actionSucceeded(title: nil, text: presentationData.strings.WordBan_Toast_Banned(rule.word).string, cancel: presentationData.strings.Undo_Undo, destructive: false), elevatedLayout: false, action: { action in
++                        if case .undo = action {
++                            WordBanStore.shared.removeRule(peerId: peerId, word: rule.word)
++                        }
++                        return false
++                    }), in: .current)
++                case let .unbanned(word):
++                    self.present(UndoOverlayController(presentationData: presentationData, content: .actionSucceeded(title: nil, text: presentationData.strings.WordBan_Toast_Unbanned(word).string, cancel: nil, destructive: false), elevatedLayout: false, action: { _ in
++                        return false
++                    }), in: .current)
++                }
++            })
++            self.push(controller)
++        }
++        if let currentContextController = self.currentContextController {
++            currentContextController.dismiss(completion: {
++                present()
++            })
++        } else {
++            present()
++        }
++    }
++
++    /// Redraws the visible messages of this chat when its bans change, so banned words hide or show at once.
++    func makeWordBanUpdatesDisposable() -> Disposable? {
++        guard let peerId = self.chatLocation.peerId else {
++            return nil
++        }
++        return (WordBanStore.shared.updated
++        |> filter { $0 == peerId }
++        |> deliverOnMainQueue).startStrict(next: { [weak self] _ in
++            self?.updateWordBanMessages()
++        })
++    }
++
++    func updateWordBanMessages() {
++        var messageIds: [EngineMessage.Id] = []
++        self.chatDisplayNode.historyNode.forEachVisibleMessageItemNode { itemNode in
++            if let item = itemNode.item {
++                messageIds.append(item.message.id)
++            }
++        }
++        for id in messageIds {
++            self.chatDisplayNode.historyNode.requestMessageUpdate(id)
++        }
++    }
++}
+diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+index e9c504df0b..67cc9ebfe2 100644
+--- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
++++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
+@@ -41,6 +41,7 @@ import AdsInfoScreen
+ import AdsReportScreen
+ import WalletContext
+ import WalletSendScreen
++import ChatWordBan
+  
+ private struct MessageContextMenuData {
+     let starStatus: Bool?
+@@ -1512,6 +1513,37 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+             }
+         }
+         
++        // One-sided word ban: a message with a banned word shows it on demand, and the ban can be lifted from here.
++        if message.effectivelyIncoming(context.account.peerId), !message.text.isEmpty {
++            let bannedMatches = wordBanMatches(text: message.text, rules: WordBanStore.shared.rules(peerId: message.id.peerId))
++            if !bannedMatches.isEmpty {
++                let messageId = message.id
++                let isRevealed = WordBanStore.shared.isRevealed(messageId: messageId)
++                actions.append(.action(ContextMenuActionItem(text: isRevealed ? chatPresentationInterfaceState.strings.WordBan_ContextMenu_Hide : chatPresentationInterfaceState.strings.WordBan_ContextMenu_Show, icon: { theme in
++                    return generateTintedImage(image: UIImage(bundleImageName: isRevealed ? "Chat/Context Menu/EyeLocked" : "Chat/Context Menu/Eye"), color: theme.actionSheet.primaryTextColor)
++                }, action: { _, f in
++                    WordBanStore.shared.setRevealed(messageId: messageId, revealed: !isRevealed)
++                    f(.default)
++                    controllerInteraction.requestMessageUpdate(messageId, false, nil)
++                })))
++                var bannedWords: [String] = []
++                for match in bannedMatches where !bannedWords.contains(where: { $0.lowercased() == match.rule.word.lowercased() }) {
++                    bannedWords.append(match.rule.word)
++                }
++                for word in bannedWords {
++                    actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.WordBan_ContextMenu_Unban(word).string, icon: { theme in
++                        return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Remove"), color: theme.actionSheet.primaryTextColor)
++                    }, action: { _, f in
++                        f(.default)
++                        WordBanStore.shared.setRevealed(messageId: messageId, revealed: false)
++                        WordBanStore.shared.removeRule(peerId: messageId.peerId, word: word)
++                        let presentationData = context.sharedContext.currentPresentationData.with { $0 }
++                        controllerInteraction.displayUndo(.actionSucceeded(title: nil, text: presentationData.strings.WordBan_Toast_Unbanned(word).string, cancel: nil, destructive: false))
++                    })))
++                }
++            }
++        }
++        
+         if resourceAvailable, !message.containsSecretMedia && !isCopyProtected {
+             var mediaReference: AnyMediaReference?
+             var isVideo = false
+diff --git a/submodules/TelegramUI/Sources/TelegramRootController.swift b/submodules/TelegramUI/Sources/TelegramRootController.swift
+index 6a07129170..b7ae7f5777 100644
+--- a/submodules/TelegramUI/Sources/TelegramRootController.swift
++++ b/submodules/TelegramUI/Sources/TelegramRootController.swift
+@@ -201,6 +201,8 @@ public final class TelegramRootController: NavigationController, TelegramRootCon
+     }
+     
+     public func addRootControllers(showCallsTab: Bool, showNewsTab: Bool) {
++        // The word ban demo build writes its local chats before the chat list shows (see `WordBanDemo`).
++        WordBanDemo.prepare(context: self.context)
+         let tabBarController = TabBarControllerImpl(theme: self.presentationData.theme, strings: self.presentationData.strings)
+         tabBarController.navigationPresentation = .master
+         let chatListController = self.context.sharedContext.makeChatListController(context: self.context, location: .chatList(groupId: .root), controlsHistoryPreload: true, hideNetworkActivityStatus: false, previewing: false, enableDebugActions: !GlobalExperimentalSettings.isAppStoreBuild)
+diff --git a/submodules/TelegramUI/Sources/WordBanDemo.swift b/submodules/TelegramUI/Sources/WordBanDemo.swift
+new file mode 100644
+index 0000000000..310b5898c2
+--- /dev/null
++++ b/submodules/TelegramUI/Sources/WordBanDemo.swift
+@@ -0,0 +1,84 @@
++import Foundation
++import SwiftSignalKit
++import TelegramCore
++import AccountContext
++import ChatWordBan
++
++/// The word ban demo build's content (`isWordBanDemoBuild`): made-up people and chats, so the demo video shows nothing
++/// real. Written on the first launch, and again (with every ban cleared) on launch with `-WordBanDemoReset YES`.
++enum WordBanDemo {
++    private static let markerKey = "WordBanDemo.SeedVersion"
++    private static let markerVersion = 1
++
++    private static let leo = wordBanDemoPeerId(index: 0, isGroup: false)
++    private static let anna = wordBanDemoPeerId(index: 1, isGroup: false)
++    private static let sam = wordBanDemoPeerId(index: 2, isGroup: false)
++    private static let mia = wordBanDemoPeerId(index: 3, isGroup: false)
++    private static let productTeam = wordBanDemoPeerId(index: 0, isGroup: true)
++    private static let weekendHike = wordBanDemoPeerId(index: 1, isGroup: true)
++
++    static func prepare(context: AccountContext) {
++        guard isWordBanDemoBuild else {
++            return
++        }
++        let defaults = UserDefaults.standard
++        let reset = defaults.bool(forKey: "WordBanDemoReset")
++        if !reset && defaults.integer(forKey: WordBanDemo.markerKey) == WordBanDemo.markerVersion {
++            return
++        }
++        WordBanStore.shared.removeAll()
++        let _ = context.engine.messages.seedWordBanDemo(WordBanDemo.seed()).start(completed: {
++            defaults.set(WordBanDemo.markerVersion, forKey: WordBanDemo.markerKey)
++        })
++    }
++
++    private static func seed() -> WordBanDemoSeed {
++        let now = Int32(Date().timeIntervalSince1970)
++        var messages: [WordBanDemoSeed.Message] = []
++        var nextId: [EnginePeer.Id: Int32] = [:]
++        func add(_ peerId: EnginePeer.Id, _ minutesAgo: Int32, _ author: EnginePeer.Id?, _ text: String) {
++            let id = (nextId[peerId] ?? 0) + 1
++            nextId[peerId] = id
++            messages.append(WordBanDemoSeed.Message(peerId: peerId, id: id, authorId: author, timestamp: now - minutesAgo * 60, text: text))
++        }
++
++        // The chat the demo is about: a colleague who mentions the deadline in every other message.
++        add(leo, 95, leo, "Morning! Quick reminder: the deadline for the pitch deck is Friday.")
++        add(leo, 94, nil, "Got it, I'm on it")
++        add(leo, 60, leo, "Also, the client moved their deadline, so ours moves too 🙃")
++        add(leo, 58, nil, "Sure, send me the new date")
++        add(leo, 31, leo, "Can we sync at 3? I want to go over the deadline plan with you.")
++        add(leo, 30, nil, "Works for me")
++        add(leo, 6, leo, "Great. And please remember: a deadline is a deadline.")
++        add(leo, 2, leo, "Last one, promise. New deadline details tomorrow morning!")
++
++        add(anna, 240, anna, "Are we still on for dinner on Saturday?")
++        add(anna, 236, nil, "Of course! 7pm at the usual place?")
++        add(anna, 12, anna, "Perfect, I booked a table by the window 🍝")
++
++        add(productTeam, 180, sam, "Standup moved to 10:30 today")
++        add(productTeam, 120, mia, "New mockups are in the shared folder")
++        add(productTeam, 25, leo, "Everyone, the deadline is Friday. Friday!")
++
++        add(sam, 600, sam, "Thanks for the book recommendation, loved it")
++        add(sam, 590, nil, "Told you! The sequel is even better")
++
++        add(weekendHike, 900, mia, "Weather looks great for Sunday ☀️")
++        add(weekendHike, 880, anna, "I'll bring snacks")
++
++        add(mia, 1500, mia, "Can you send me the photos from the trip?")
++        add(mia, 1490, nil, "Sending tonight 📸")
++
++        return WordBanDemoSeed(
++            peers: [
++                WordBanDemoSeed.Peer(id: leo, kind: .user(firstName: "Leo", lastName: "Park"), unreadCount: 2),
++                WordBanDemoSeed.Peer(id: anna, kind: .user(firstName: "Anna", lastName: "Kovacs"), unreadCount: 1),
++                WordBanDemoSeed.Peer(id: productTeam, kind: .group(title: "Product Team", memberCount: 6), unreadCount: 3),
++                WordBanDemoSeed.Peer(id: sam, kind: .user(firstName: "Sam", lastName: "Rivera")),
++                WordBanDemoSeed.Peer(id: weekendHike, kind: .group(title: "Weekend Hike", memberCount: 4)),
++                WordBanDemoSeed.Peer(id: mia, kind: .user(firstName: "Mia", lastName: "Chen"))
++            ],
++            messages: messages
++        )
++    }
++}
+diff --git a/submodules/TextSelectionNode/Sources/TextSelectionNode.swift b/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
+index a29a16142a..7709b40bba 100644
+--- a/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
++++ b/submodules/TextSelectionNode/Sources/TextSelectionNode.swift
+@@ -213,6 +213,8 @@ public enum TextSelectionAction: Equatable {
+     case speak
+     case translate
+     case quote(range: Range<Int>)
++    /// Ban the selected word in this chat (one-sided word ban).
++    case banWord
+ }
+ 
+ public final class TextSelectionNode: ASDisplayNode {
+@@ -284,6 +286,8 @@ public final class TextSelectionNode: ASDisplayNode {
+     public var enableCopy: Bool = true
+     public var enableLookup: Bool = true
+     public var enableQuote: Bool = false
++    /// Offers "Ban a Word" for a selection in an incoming message.
++    public var enableBanWord: Bool = false
+     public var selectAllAfterCopy: Bool = false
+     public var enableTranslate: Bool = true
+     public var enableSpeak: Bool = false
+@@ -780,6 +784,12 @@ public final class TextSelectionNode: ASDisplayNode {
+                 self?.cancelSelection()
+             }))
+         }
++        if self.enableBanWord {
++            actions.append(ContextMenuAction(content: .text(title: self.strings.WordBan_ContextMenuBan, accessibilityLabel: self.strings.WordBan_ContextMenuBan), action: { [weak self] in
++                self?.performAction(string, .banWord)
++                self?.cancelSelection()
++            }))
++        }
+         if self.enableQuote {
+             actions.append(ContextMenuAction(content: .text(title: self.strings.Conversation_ContextMenuQuote, accessibilityLabel: self.strings.Conversation_ContextMenuQuote), action: { [weak self] in
+                 self?.performAction(string, .quote(range: adjustedRange.lowerBound ..< adjustedRange.upperBound))
