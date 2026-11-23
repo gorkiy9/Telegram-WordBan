@@ -10,10 +10,10 @@ replaced with your own text or emoji. The sender and the server know nothing abo
 
 ## Demo
 
-One take on the offline demo build: Leo writes "deadline" in every other message, in every spelling. The word is
-selected in his latest message, **Ban a Word** opens the sheet; Censored previews the strip, Replace turns "deadline"
+One take on the offline demo build: Leo writes "deadline" in every other message, in every spelling, and sends two
+more while a reply is being typed. The word is selected in his latest message, **Ban a Word** opens the sheet; Censored previews the strip, Replace turns "deadline"
 into "funline", the wheel sets **Forever**, and **Ban Word** replaces it in the whole chat, "Deadline", "deadlines",
-"DEADLINE" and "deadliiine" included, while new messages from Leo arrive already replaced. A long press on a message
+"DEADLINE" and "deadliiine" included, each marked **banned word**. A long press on a message
 shows **Show Word** and **Unban "deadline"**, and Unban brings the word back.
 
 ## What it does
