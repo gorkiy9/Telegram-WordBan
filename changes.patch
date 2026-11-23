@@ -738,10 +738,10 @@ index 0000000000..ce745c6681
 +)
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
 new file mode 100644
-index 0000000000..6be640c00b
+index 0000000000..4d78e0bf45
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
-@@ -0,0 +1,618 @@
+@@ -0,0 +1,623 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -983,6 +983,11 @@ index 0000000000..6be640c00b
 +                            return
 +                        }
 +                        if state.option != option {
++                            if state.option == .replace {
++                                // The field leaves with Replace: end editing first, or its end-editing update
++                                // would run inside the sheet's own update and trap.
++                                state.controller?.view.endEditing(true)
++                            }
 +                            state.option = option
 +                            state.updated(transition: .spring(duration: 0.4))
 +                            if option == .replace {
