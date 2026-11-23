@@ -4,7 +4,17 @@ Some words you would rather not see: a colleague's endless "deadline", a spoiler
 ban a word in one chat, for yourself only. Incoming messages with it keep coming, but the word is blacked out or
 replaced with your own text or emoji. The sender and the server know nothing about it.
 
-> Preliminary demo. The demo video is not recorded yet.
+▶️ [Watch the demo](demo.mp4) (0:28)
+
+![Selecting a word, the ban sheet with a replacement, and the chat with the word replaced](screenshots/preview.png)
+
+## Demo
+
+One take on the offline demo build: Leo writes "deadline" in every other message, in every spelling. The word is
+selected in his latest message, **Ban a Word** opens the sheet; Censored previews the strip, Replace turns "deadline"
+into "funline", the wheel sets **Forever**, and **Ban Word** replaces it in the whole chat, "Deadline", "deadlines",
+"DEADLINE" and "deadliiine" included, while new messages from Leo arrive already replaced. A long press on a message
+shows **Show Word** and **Unban "deadline"**, and Unban brings the word back.
 
 ## What it does
 
@@ -59,13 +69,14 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 - **The demo build.** The demo is recorded on a separate offline build, so no real data can reach it. It is on only when
   the bundle id contains `WordBanDemo` (`isWordBanDemoBuild`): the app signs in to a local account without a server,
   points all data centres at a closed local port, and fills the chats from `TelegramUI/Sources/WordBanDemo.swift`.
-  Launching with `-WordBanDemoReset YES` restores the chats and clears every ban. A regular build never enables any of
+  Launching with `-WordBanDemoReset YES` restores the chats and clears every ban; in the demo build Leo's next
+  message arrives on `xcrun simctl spawn <device> notifyutil -p org.wordban.demo.incoming`, so a take controls when. A regular build never enables any of
   this.
 
 ## Applying the change
 
 `changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
-checkout of that commit (31 files, +2 312 −9):
+checkout of that commit (31 files, +2 368 −9):
 
 ```
 git apply --check changes.patch

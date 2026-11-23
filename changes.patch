@@ -180,10 +180,10 @@ index 0c03828fbe..ea7b5f96c6 100644
          if let state = view.state as? AuthorizedAccountState {
 diff --git a/submodules/TelegramCore/Sources/TelegramEngine/Messages/WordBanDemo.swift b/submodules/TelegramCore/Sources/TelegramEngine/Messages/WordBanDemo.swift
 new file mode 100644
-index 0000000000..c0fc75da26
+index 0000000000..d02cf580cd
 --- /dev/null
 +++ b/submodules/TelegramCore/Sources/TelegramEngine/Messages/WordBanDemo.swift
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,206 @@
 +import Foundation
 +import Postbox
 +import SwiftSignalKit
@@ -345,6 +345,22 @@ index 0000000000..c0fc75da26
 +                transaction.updatePeerChatListInclusion(peer.id, inclusion: .ifHasMessagesOrOneOf(groupId: .root, pinningIndex: nil, minTimestamp: nil))
 +            }
 +            transaction.resetIncomingReadStates(readStates)
++        }
++        |> ignoreValues
++    }
++}
++
++public extension TelegramEngine.Messages {
++    /// A demo peer's message arriving now, as if from the server: the next id in the chat, unread until the chat reads it.
++    func receiveWordBanDemoMessage(peerId: EnginePeer.Id, authorId: EnginePeer.Id, text: String) -> Signal<Never, NoError> {
++        guard isWordBanDemoBuild, isWordBanDemoPeer(peerId) else {
++            return .complete()
++        }
++        return self.account.postbox.transaction { transaction -> Void in
++            let id = (transaction.getTopPeerMessageId(peerId: peerId, namespace: Namespaces.Message.Cloud)?.id ?? 0) + 1
++            let (tags, globalTags) = tagsForStoreMessage(incoming: true, attributes: [], media: [], textEntities: nil, isPinned: false)
++            let message = StoreMessage(id: MessageId(peerId: peerId, namespace: Namespaces.Message.Cloud, id: id), customStableId: nil, globallyUniqueId: nil, groupingKey: nil, threadId: nil, timestamp: Int32(Date().timeIntervalSince1970), flags: [.Incoming], tags: tags, globalTags: globalTags, localTags: [], forwardInfo: nil, authorId: authorId, text: text, attributes: [], media: [])
++            let _ = transaction.addMessages([message], location: .UpperHistoryBlock)
 +        }
 +        |> ignoreValues
 +    }
@@ -2628,10 +2644,10 @@ index 6a07129170..b7ae7f5777 100644
          let chatListController = self.context.sharedContext.makeChatListController(context: self.context, location: .chatList(groupId: .root), controlsHistoryPreload: true, hideNetworkActivityStatus: false, previewing: false, enableDebugActions: !GlobalExperimentalSettings.isAppStoreBuild)
 diff --git a/submodules/TelegramUI/Sources/WordBanDemo.swift b/submodules/TelegramUI/Sources/WordBanDemo.swift
 new file mode 100644
-index 0000000000..e7b95e53a3
+index 0000000000..00ed66de12
 --- /dev/null
 +++ b/submodules/TelegramUI/Sources/WordBanDemo.swift
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,124 @@
 +import Foundation
 +import SwiftSignalKit
 +import TelegramCore
@@ -2642,7 +2658,7 @@ index 0000000000..e7b95e53a3
 +/// real. Written on the first launch, and again (with every ban cleared) on launch with `-WordBanDemoReset YES`.
 +enum WordBanDemo {
 +    private static let markerKey = "WordBanDemo.SeedVersion"
-+    private static let markerVersion = 3
++    private static let markerVersion = 5
 +
 +    private static let leo = wordBanDemoPeerId(index: 0, isGroup: false)
 +    private static let anna = wordBanDemoPeerId(index: 1, isGroup: false)
@@ -2655,6 +2671,7 @@ index 0000000000..e7b95e53a3
 +        guard isWordBanDemoBuild else {
 +            return
 +        }
++        WordBanDemo.listenForIncoming(context: context)
 +        let defaults = UserDefaults.standard
 +        let reset = defaults.bool(forKey: "WordBanDemoReset")
 +        if !reset && defaults.integer(forKey: WordBanDemo.markerKey) == WordBanDemo.markerVersion {
@@ -2664,6 +2681,39 @@ index 0000000000..e7b95e53a3
 +        let _ = context.engine.messages.seedWordBanDemo(WordBanDemo.seed()).start(completed: {
 +            defaults.set(WordBanDemo.markerVersion, forKey: WordBanDemo.markerKey)
 +        })
++    }
++
++    /// Messages Leo sends while the demo is recorded, one per `org.wordban.demo.incoming` Darwin notification
++    /// (`xcrun simctl spawn <device> notifyutil -p org.wordban.demo.incoming`), so a take controls when each arrives.
++    private static let incoming: [String] = [
++        "Sorry, one more thing about the deadline…",
++        "The deadline moved to Thursday. THURSDAY!"
++    ]
++    private static var incomingContext: AccountContext?
++    private static var incomingIndex = 0
++    private static var isListening = false
++
++    private static func listenForIncoming(context: AccountContext) {
++        WordBanDemo.incomingContext = context
++        WordBanDemo.incomingIndex = 0
++        if WordBanDemo.isListening {
++            return
++        }
++        WordBanDemo.isListening = true
++        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
++            DispatchQueue.main.async {
++                WordBanDemo.deliverNextIncoming()
++            }
++        }, "org.wordban.demo.incoming" as CFString, nil, .deliverImmediately)
++    }
++
++    private static func deliverNextIncoming() {
++        guard let context = WordBanDemo.incomingContext, WordBanDemo.incomingIndex < WordBanDemo.incoming.count else {
++            return
++        }
++        let text = WordBanDemo.incoming[WordBanDemo.incomingIndex]
++        WordBanDemo.incomingIndex += 1
++        let _ = context.engine.messages.receiveWordBanDemoMessage(peerId: WordBanDemo.leo, authorId: WordBanDemo.leo, text: text).start()
 +    }
 +
 +    private static func seed() -> WordBanDemoSeed {
@@ -2677,14 +2727,20 @@ index 0000000000..e7b95e53a3
 +        }
 +
 +        // The chat the demo is about: a colleague who mentions the deadline in every other message.
-+        add(leo, 95, leo, "Morning! Quick reminder: the deadline for the pitch deck is Friday.")
++        add(leo, 8700, leo, "Hey Alex, welcome to the team! 👋")
++        add(leo, 8695, nil, "Thanks Leo, happy to be here!")
++        add(leo, 5900, leo, "Heads up: deadlines are sacred here 😄")
++        add(leo, 5880, nil, "Noted 😅")
++        add(leo, 3000, leo, "Deadline check: how is the deck going?")
++        add(leo, 2990, nil, "Slides are almost done")
++        add(leo, 2985, leo, "Perfect, the deadline is safe then")
++        add(leo, 95, leo, "Morning! Quick reminder: the Deadline for the pitch deck is Friday.")
 +        add(leo, 94, nil, "Got it, I'm on it")
-+        add(leo, 60, leo, "Also, the client moved their deadline, so ours moves too 🙃")
++        add(leo, 60, leo, "The client moved their deadlines, so ours move too 🙃")
 +        add(leo, 58, nil, "Sure, send me the new date")
-+        add(leo, 31, leo, "Can we sync at 3? I want to go over the deadline plan with you.")
++        add(leo, 31, leo, "Can we sync at 3? DEADLINE plan, 10 minutes.")
 +        add(leo, 30, nil, "Works for me")
-+        add(leo, 6, leo, "Great. And please remember: a deadline is a deadline.")
-+        add(leo, 2, leo, "Last one, promise. New deadline details tomorrow morning!")
++        add(leo, 6, leo, "Great. And remember: a deadliiine is a deadline 😅")
 +
 +        add(anna, 240, anna, "Are we still on for dinner on Saturday?")
 +        add(anna, 236, nil, "Of course! 7pm at the usual place?")
@@ -2705,7 +2761,7 @@ index 0000000000..e7b95e53a3
 +
 +        return WordBanDemoSeed(
 +            peers: [
-+                WordBanDemoSeed.Peer(id: leo, kind: .user(firstName: "Leo", lastName: "Park"), unreadCount: 2, photo: WordBanDemoAvatars.leo),
++                WordBanDemoSeed.Peer(id: leo, kind: .user(firstName: "Leo", lastName: "Park"), photo: WordBanDemoAvatars.leo),
 +                WordBanDemoSeed.Peer(id: anna, kind: .user(firstName: "Anna", lastName: "Kovacs"), unreadCount: 1, photo: WordBanDemoAvatars.anna),
 +                WordBanDemoSeed.Peer(id: productTeam, kind: .group(title: "Product Team", memberCount: 6), unreadCount: 3, photo: WordBanDemoAvatars.team),
 +                WordBanDemoSeed.Peer(id: sam, kind: .user(firstName: "Sam", lastName: "Rivera"), photo: WordBanDemoAvatars.sam),
