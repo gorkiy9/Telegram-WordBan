@@ -786,10 +786,10 @@ index 0000000000..ce745c6681
 +)
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
 new file mode 100644
-index 0000000000..beaa24c934
+index 0000000000..00657dc144
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
-@@ -0,0 +1,682 @@
+@@ -0,0 +1,680 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -1182,82 +1182,80 @@ index 0000000000..beaa24c934
 +            let buttonInsets = ContainerViewLayout.concentricInsets(bottomInset: environment.safeInsets.bottom, innerDiameter: 52.0, sideInset: 30.0)
 +            let buttonSpacing: CGFloat = 10.0
 +
-+            let durationTextColor = theme.list.itemPrimaryTextColor
-+            let durationButton = durationButton.update(
-+                component: GlassBarButtonComponent(
-+                    size: nil,
-+                    backgroundColor: nil,
-+                    isDark: theme.overallDarkAppearance,
-+                    state: .glass,
-+                    isEnabled: state.option != .visible,
-+                    component: AnyComponentWithIdentity(id: "duration", component: AnyComponent(HStack([
-+                        AnyComponentWithIdentity(id: AnyHashable(state.duration.rawValue), component: AnyComponent(MultilineTextComponent(
-+                            text: .plain(NSAttributedString(string: durationTitle(state.duration, strings: strings), font: Font.semibold(17.0), textColor: durationTextColor))
-+                        ))),
-+                        AnyComponentWithIdentity(id: "arrows", component: AnyComponent(BundleIconComponent(
-+                            name: "Item List/ExpandableSelectorArrows",
-+                            tintColor: durationTextColor
-+                        )))
-+                    ], spacing: 6.0))),
-+                    action: { [weak state] view in
-+                        guard let state else {
-+                            return
-+                        }
-+                        state.openDurationMenu(sourceView: view, presentationData: component.context.sharedContext.currentPresentationData.with { $0 })
-+                    }
-+                ),
-+                availableSize: CGSize(width: context.availableSize.width / 2.0, height: 52.0),
-+                transition: context.transition
-+            )
-+            let durationButtonWidth = durationButton.size.width + 14.0
-+
-+            let buttonTitle: String
-+            if state.option == .visible {
-+                buttonTitle = component.initialRule != nil ? strings.WordBan_Unban : strings.WordBan_Ban
-+            } else {
-+                buttonTitle = component.initialRule != nil ? strings.WordBan_Save : strings.WordBan_Ban
-+            }
-+            var isEnabled = true
-+            if state.option == .visible && component.initialRule == nil {
-+                isEnabled = false
-+            }
-+            if state.option == .replace && state.replacement.isEmpty {
-+                isEnabled = false
-+            }
-+            let hasDurationButton = state.option != .visible
-+            let banButtonWidth = context.availableSize.width - buttonInsets.left - buttonInsets.right - (hasDurationButton ? durationButtonWidth + buttonSpacing : 0.0)
-+            let banButton = banButton.update(
-+                component: ButtonComponent(
-+                    background: ButtonComponent.Background(
-+                        style: .glass,
-+                        color: theme.list.itemCheckColors.fillColor,
-+                        foreground: theme.list.itemCheckColors.foregroundColor,
-+                        pressedColor: theme.list.itemCheckColors.fillColor.withMultipliedAlpha(0.9)
-+                    ),
-+                    content: AnyComponentWithIdentity(
-+                        id: AnyHashable(buttonTitle),
-+                        component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: buttonTitle, font: Font.semibold(17.0), textColor: theme.list.itemCheckColors.foregroundColor, paragraphAlignment: .center))))
-+                    ),
-+                    isEnabled: isEnabled,
-+                    action: { [weak state] in
-+                        state?.complete()
-+                    }
-+                ),
-+                availableSize: CGSize(width: banButtonWidth, height: 52.0),
-+                transition: context.transition
-+            )
-+            // Visible on a word without a ban changes nothing, so there is no button to press.
++            // Visible on a word without a ban changes nothing, so there is no button to press. ComponentFlow requires
++            // every child updated in a pass to be added in it, so the buttons are updated only when shown.
 +            let showsBanButton = !(state.option == .visible && component.initialRule == nil)
++            let hasDurationButton = state.option != .visible
 +            if showsBanButton {
++                var durationButtonWidth: CGFloat = 0.0
++                if hasDurationButton {
++                    let durationTextColor = theme.list.itemPrimaryTextColor
++                    let durationButton = durationButton.update(
++                        component: GlassBarButtonComponent(
++                            size: nil,
++                            backgroundColor: nil,
++                            isDark: theme.overallDarkAppearance,
++                            state: .glass,
++                            component: AnyComponentWithIdentity(id: "duration", component: AnyComponent(HStack([
++                                AnyComponentWithIdentity(id: AnyHashable(state.duration.rawValue), component: AnyComponent(MultilineTextComponent(
++                                    text: .plain(NSAttributedString(string: durationTitle(state.duration, strings: strings), font: Font.semibold(17.0), textColor: durationTextColor))
++                                ))),
++                                AnyComponentWithIdentity(id: "arrows", component: AnyComponent(BundleIconComponent(
++                                    name: "Item List/ExpandableSelectorArrows",
++                                    tintColor: durationTextColor
++                                )))
++                            ], spacing: 6.0))),
++                            action: { [weak state] view in
++                                guard let state else {
++                                    return
++                                }
++                                state.openDurationMenu(sourceView: view, presentationData: component.context.sharedContext.currentPresentationData.with { $0 })
++                            }
++                        ),
++                        availableSize: CGSize(width: context.availableSize.width / 2.0, height: 52.0),
++                        transition: context.transition
++                    )
++                    durationButtonWidth = durationButton.size.width + 14.0
++                    context.add(durationButton
++                        .position(CGPoint(x: context.availableSize.width - buttonInsets.right - durationButtonWidth / 2.0, y: contentHeight + 26.0))
++                        .appear(.default(scale: true, alpha: true))
++                        .disappear(.default(scale: true, alpha: true))
++                    )
++                }
++
++                let buttonTitle: String
++                if state.option == .visible {
++                    buttonTitle = strings.WordBan_Unban
++                } else {
++                    buttonTitle = component.initialRule != nil ? strings.WordBan_Save : strings.WordBan_Ban
++                }
++                var isEnabled = true
++                if state.option == .replace && state.replacement.isEmpty {
++                    isEnabled = false
++                }
++                let banButtonWidth = context.availableSize.width - buttonInsets.left - buttonInsets.right - (hasDurationButton ? durationButtonWidth + buttonSpacing : 0.0)
++                let banButton = banButton.update(
++                    component: ButtonComponent(
++                        background: ButtonComponent.Background(
++                            style: .glass,
++                            color: theme.list.itemCheckColors.fillColor,
++                            foreground: theme.list.itemCheckColors.foregroundColor,
++                            pressedColor: theme.list.itemCheckColors.fillColor.withMultipliedAlpha(0.9)
++                        ),
++                        content: AnyComponentWithIdentity(
++                            id: AnyHashable(buttonTitle),
++                            component: AnyComponent(MultilineTextComponent(text: .plain(NSAttributedString(string: buttonTitle, font: Font.semibold(17.0), textColor: theme.list.itemCheckColors.foregroundColor, paragraphAlignment: .center))))
++                        ),
++                        isEnabled: isEnabled,
++                        action: { [weak state] in
++                            state?.complete()
++                        }
++                    ),
++                    availableSize: CGSize(width: banButtonWidth, height: 52.0),
++                    transition: context.transition
++                )
 +                context.add(banButton
 +                    .position(CGPoint(x: buttonInsets.left + banButton.size.width / 2.0, y: contentHeight + banButton.size.height / 2.0))
-+                    .appear(.default(scale: true, alpha: true))
-+                    .disappear(.default(scale: true, alpha: true))
-+                )
-+            }
-+            if hasDurationButton {
-+                context.add(durationButton
-+                    .position(CGPoint(x: context.availableSize.width - buttonInsets.right - durationButtonWidth / 2.0, y: contentHeight + 26.0))
 +                    .appear(.default(scale: true, alpha: true))
 +                    .disappear(.default(scale: true, alpha: true))
 +                )

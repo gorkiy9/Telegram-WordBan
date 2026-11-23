@@ -55,7 +55,7 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 ## Applying the change
 
 `changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
-checkout of that commit (25 files, +1 490 −5):
+checkout of that commit (25 files, +1 488 −5):
 
 ```
 git apply --check changes.patch
