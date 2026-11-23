@@ -41,7 +41,9 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 
 - **Built from the client.** The sheet is `SheetComponent` with `TabSelectorComponent`, `ListTextFieldItemComponent`,
   `ListSwitchItemComponent`, `ButtonComponent` and `GlassBarButtonComponent`; the duration wheel is the client's
-  `ChatTimerScreen` (as for auto-delete), the toasts are `UndoOverlayController`. Colours and fonts come from `PresentationTheme`.
+  `ChatTimerScreen` (as for auto-delete; a new `singleLinePickerItems` option shows "1 Week" and "Forever" in one
+  font), the Similar Words row gets the input-field fill through a new optional `backgroundColor` of
+  `ListSwitchItemComponent`, the toasts are `UndoOverlayController`. Colours and fonts come from `PresentationTheme`.
 - **Display only.** `ChatMessageTextBubbleContentNode` applies the chat's bans to an incoming message's text before
   layout (`wordBanApply`: the replacement with entity ranges shifted, or the ranges to black out, which the bubble
   covers with bars from the text layout's range rects in the message's text colour). The stored
@@ -63,7 +65,7 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 ## Applying the change
 
 `changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
-checkout of that commit (29 files, +2 263 −5):
+checkout of that commit (31 files, +2 286 −9):
 
 ```
 git apply --check changes.patch

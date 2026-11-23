@@ -1212,7 +1212,7 @@ index 0000000000..7adf424f94
 +)
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanPreviewComponents.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanPreviewComponents.swift
 new file mode 100644
-index 0000000000..766c5ff783
+index 0000000000..ba0e02f270
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanPreviewComponents.swift
 @@ -0,0 +1,284 @@
@@ -1279,7 +1279,7 @@ index 0000000000..766c5ff783
 +
 +/// The banned word in the preview. Normal: as is. Placeholder (Replace with nothing typed yet): in the placeholder
 +/// colour, where the replacement will appear. Faded (Replace with text typed): it moves back behind the replacement:
-+/// smaller, blurred by 4 pt and fading out downwards. Scaling is a uniform transform, so the letters never stretch.
++/// smaller, blurred by 2 pt and fading out downwards. Scaling is a uniform transform, so the letters never stretch.
 +final class WordBanFadedWordComponent: Component {
 +    enum Appearance: Equatable {
 +        case normal
@@ -1307,7 +1307,7 @@ index 0000000000..766c5ff783
 +
 +    /// The reference sizes: 34 pt for the word, 28 pt once a replacement covers it.
 +    private static let fadedScale: CGFloat = 28.0 / 34.0
-+    private static let fadedBlurRadius: CGFloat = 4.0
++    private static let fadedBlurRadius: CGFloat = 2.0
 +    /// Room around the text for the blur, which a mask would otherwise cut off at the text's edges.
 +    private static let blurPadding: CGFloat = 10.0
 +
@@ -1502,10 +1502,10 @@ index 0000000000..766c5ff783
 +}
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
 new file mode 100644
-index 0000000000..5fb72fbcb1
+index 0000000000..ea3431b9d7
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
-@@ -0,0 +1,746 @@
+@@ -0,0 +1,748 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -1651,7 +1651,8 @@ index 0000000000..5fb72fbcb1
 +                    },
 +                    pickerTextColor: { theme in
 +                        theme.list.itemPrimaryTextColor
-+                    }
++                    },
++                    singleLinePickerItems: true
 +                ),
 +                completion: { [weak self] value in
 +                    guard let self, let value, let duration = WordBanDuration(rawValue: value) else {
@@ -1959,7 +1960,8 @@ index 0000000000..5fb72fbcb1
 +                                    }
 +                                    state.includesSimilar = value
 +                                    state.updated(transition: .spring(duration: 0.4))
-+                                }
++                                },
++                                backgroundColor: theme.list.itemInputField.backgroundColor
 +                            )))
 +                        ]
 +                    ),
@@ -2252,6 +2254,66 @@ index 0000000000..5fb72fbcb1
 +        }
 +    }
 +}
+diff --git a/submodules/TelegramUI/Components/ChatTimerScreen/Sources/ChatTimerScreen.swift b/submodules/TelegramUI/Components/ChatTimerScreen/Sources/ChatTimerScreen.swift
+index cc7b0483c9..5600dfb721 100644
+--- a/submodules/TelegramUI/Components/ChatTimerScreen/Sources/ChatTimerScreen.swift
++++ b/submodules/TelegramUI/Components/ChatTimerScreen/Sources/ChatTimerScreen.swift
+@@ -94,6 +94,8 @@ private let nondigitsCharacterSet = CharacterSet(charactersIn: "0123456789").inv
+ private final class TimerPickerItemView: UIView {
+     let valueLabel = UILabel()
+     let unitLabel = UILabel()
++    /// Shows the whole title in the value font, so numbers and words are the same size.
++    var isSingleLine = false
+ 
+     var textColor: UIColor? = nil {
+         didSet {
+@@ -106,7 +108,10 @@ private final class TimerPickerItemView: UIView {
+         didSet {
+             if let (value, string) = self.value {
+                 let components = string.components(separatedBy: " ")
+-                if value == viewOnceTimeout || string.rangeOfCharacter(from: digitsCharacterSet) == nil {
++                if self.isSingleLine {
++                    self.valueLabel.text = string
++                    self.unitLabel.text = ""
++                } else if value == viewOnceTimeout || string.rangeOfCharacter(from: digitsCharacterSet) == nil {
+                     self.valueLabel.text = string
+                     self.unitLabel.text = ""
+                 } else if components.count > 1 {
+@@ -726,6 +731,7 @@ public final class ChatTimerPickerContentComponent: Component {
+                 itemView = TimerPickerItemView()
+             }
+             itemView.textColor = self.pickerTextColor(configuration: component.configuration, theme: component.theme)
++            itemView.isSingleLine = component.configuration.singleLinePickerItems
+ 
+             switch component.configuration.picker {
+             case let .fixedValues(values, _, formatter):
+@@ -1008,6 +1014,8 @@ public final class ChatTimerScreen: ViewControllerComponentContainer {
+         public let secondaryAction: SecondaryAction?
+         public let completionValueTransform: (Int32?) -> Int32?
+         public let pickerTextColor: ((PresentationTheme) -> UIColor)?
++        /// Fixed values only: each row as one line in one font, instead of a large number and a smaller unit.
++        public let singleLinePickerItems: Bool
+ 
+         public init(
+             style: ChatTimerScreenStyle,
+@@ -1020,7 +1028,8 @@ public final class ChatTimerScreen: ViewControllerComponentContainer {
+             primaryActionTitle: @escaping (PresentationStrings, PresentationDateTimeFormat, Int32?) -> String,
+             secondaryAction: SecondaryAction? = nil,
+             completionValueTransform: @escaping (Int32?) -> Int32? = { $0 },
+-            pickerTextColor: ((PresentationTheme) -> UIColor)? = nil
++            pickerTextColor: ((PresentationTheme) -> UIColor)? = nil,
++            singleLinePickerItems: Bool = false
+         ) {
+             self.style = style
+             self.title = title
+@@ -1033,6 +1042,7 @@ public final class ChatTimerScreen: ViewControllerComponentContainer {
+             self.secondaryAction = secondaryAction
+             self.completionValueTransform = completionValueTransform
+             self.pickerTextColor = pickerTextColor
++            self.singleLinePickerItems = singleLinePickerItems
+         }
+ 
+         public static func ==(lhs: Configuration, rhs: Configuration) -> Bool {
 diff --git a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift b/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
 index a960aed344..20d215aca8 100644
 --- a/submodules/TelegramUI/Components/Gifts/GiftViewScreen/Sources/GiftViewScreen.swift
@@ -2265,6 +2327,54 @@ index a960aed344..20d215aca8 100644
              case .lookup:
                  let lookupController = UIReferenceLibraryViewController(term: text.string)
                  if let window = controller.view.window {
+diff --git a/submodules/TelegramUI/Components/ListSwitchItemComponent/Sources/ListSwitchItemComponent.swift b/submodules/TelegramUI/Components/ListSwitchItemComponent/Sources/ListSwitchItemComponent.swift
+index c69ca029ed..e2385db583 100644
+--- a/submodules/TelegramUI/Components/ListSwitchItemComponent/Sources/ListSwitchItemComponent.swift
++++ b/submodules/TelegramUI/Components/ListSwitchItemComponent/Sources/ListSwitchItemComponent.swift
+@@ -12,19 +12,23 @@ public final class ListSwitchItemComponent: Component {
+     let value: Bool
+     let valueUpdated: (Bool) -> Void
+     let accessibility: ComponentAccessibility?
++    /// The row's fill; nil keeps the list's blocks background.
++    let backgroundColor: UIColor?
+     
+     public init(
+         theme: PresentationTheme,
+         title: String,
+         value: Bool,
+         valueUpdated: @escaping (Bool) -> Void,
+-        accessibility: ComponentAccessibility? = nil
++        accessibility: ComponentAccessibility? = nil,
++        backgroundColor: UIColor? = nil
+     ) {
+         self.theme = theme
+         self.title = title
+         self.value = value
+         self.valueUpdated = valueUpdated
+         self.accessibility = accessibility
++        self.backgroundColor = backgroundColor
+     }
+     
+     public static func ==(lhs: ListSwitchItemComponent, rhs: ListSwitchItemComponent) -> Bool {
+@@ -40,6 +44,9 @@ public final class ListSwitchItemComponent: Component {
+         if lhs.accessibility != rhs.accessibility {
+             return false
+         }
++        if lhs.backgroundColor != rhs.backgroundColor {
++            return false
++        }
+         return true
+     }
+     
+@@ -70,7 +77,7 @@ public final class ListSwitchItemComponent: Component {
+             self.component = component
+             self.state = state
+             
+-            self.backgroundColor = component.theme.list.itemBlocksBackgroundColor
++            self.backgroundColor = component.backgroundColor ?? component.theme.list.itemBlocksBackgroundColor
+             self.layer.cornerRadius = 26.0
+             
+             let size = CGSize(width: availableSize.width, height: 52.0)
 diff --git a/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemSetContainerComponent.swift b/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemSetContainerComponent.swift
 index 5a230b1f2c..d43b42703e 100644
 --- a/submodules/TelegramUI/Components/Stories/StoryContainerScreen/Sources/StoryItemSetContainerComponent.swift
