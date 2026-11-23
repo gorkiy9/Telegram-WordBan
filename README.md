@@ -34,8 +34,8 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
   forms ("deadlines", "дедлайнами"; the system lemmatizer from NaturalLanguage, with common Russian and English endings
   for words it does not know) and its beginning stretched ("Йооо" for "Йоу": at least two letters and two thirds of the
   word, the last letter repeated). The switch's footer shows an example of each, made from the word being banned.
-- The message's status line says **banned word**, next to the time, the way it says "edited".
-- The message's context menu has **Show Word** (for this message; **Hide Word** puts it back) and **Unban "word"**.
+- The message's status line says **banned word** (**banned words** when it has more than one), next to the time, the way it says "edited". An edited message shows both: **banned word, edited 12:00**.
+- The message's context menu has **Show Word** (for this message; **Hide Word** puts it back; **Show Words** / **Hide Words** for several) and **Unban "word"** for each banned word.
 
 ## How it works
 
@@ -65,7 +65,7 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 ## Applying the change
 
 `changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
-checkout of that commit (31 files, +2 286 −9):
+checkout of that commit (31 files, +2 312 −9):
 
 ```
 git apply --check changes.patch

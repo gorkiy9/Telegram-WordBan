@@ -1,14 +1,15 @@
 diff --git a/Telegram/Telegram-iOS/en.lproj/Localizable.strings b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
-index 0c6e4e28f1..25efb794a0 100644
+index 0c6e4e28f1..5b1241c255 100644
 --- a/Telegram/Telegram-iOS/en.lproj/Localizable.strings
 +++ b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
-@@ -17342,3 +17342,32 @@ Error: %8$@";
+@@ -17342,3 +17342,35 @@ Error: %8$@";
  "VoiceOver.Reactions.ShowAll" = "Show All Reactions";
  "VoiceOver.Reactions.Premium" = "Premium Reactions";
  "VoiceOver.Passcode.Incorrect" = "Incorrect passcode. Please try again.";
 +
 +"WordBan.ContextMenuBan" = "Ban a Word";
 +"WordBan.StatusLabel" = "banned word";
++"WordBan.StatusLabelMany" = "banned words";
 +"WordBan.Title" = "Ban a Word";
 +"WordBan.Mode.Visible" = "Visible";
 +"WordBan.Mode.Censored" = "Censored";
@@ -32,6 +33,8 @@ index 0c6e4e28f1..25efb794a0 100644
 +"WordBan.Toast.Unbanned" = "“%@” is no longer banned";
 +"WordBan.ContextMenu.Show" = "Show Word";
 +"WordBan.ContextMenu.Hide" = "Hide Word";
++"WordBan.ContextMenu.ShowMany" = "Show Words";
++"WordBan.ContextMenu.HideMany" = "Hide Words";
 +"WordBan.ContextMenu.Unban" = "Unban “%@”";
 +"WordBan.Similar.Title" = "Similar Words";
 +"WordBan.Similar.Info" = "Also hide the word stretched (%1$@), in other forms (%2$@) and shortened (%3$@).";
@@ -397,7 +400,7 @@ index c0c2f2abaa..027533af54 100644
          "//submodules/TelegramUI/Components/ShimmeringMask",
          "//submodules/TelegramUI/Components/StreamingTextReveal:StreamingTextReveal",
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
-index 8652b352c5..6f4cb68d6a 100644
+index 8652b352c5..f612f306fa 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 @@ -28,6 +28,7 @@ import InteractiveTextComponent
@@ -417,7 +420,7 @@ index 8652b352c5..6f4cb68d6a 100644
                  
                  let statusType: ChatMessageDateAndStatusType?
                  var displayStatus = false
-@@ -427,6 +428,18 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -427,6 +428,28 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                      }
                  }
                  
@@ -427,16 +430,26 @@ index 8652b352c5..6f4cb68d6a 100644
 +                if incoming && invoice == nil && story == nil && !item.presentationData.isPreview && !WordBanStore.shared.isRevealed(messageId: item.message.id) {
 +                    let wordBanRules = WordBanStore.shared.rules(peerId: item.message.id.peerId)
 +                    if !wordBanRules.isEmpty, let applied = wordBanApply(text: rawText, entities: messageEntities, rules: wordBanRules) {
++                        let bannedWordCount = wordBanDistinctWords(wordBanMatches(text: rawText, rules: wordBanRules)).count
 +                        rawText = applied.text
 +                        messageEntities = applied.entities
 +                        wordBanCensoredRanges = applied.censoredRanges
-+                        dateText = item.presentationData.strings.WordBan_StatusLabel + " " + dateText
++                        let strings = item.presentationData.strings
++                        var label = bannedWordCount > 1 ? strings.WordBan_StatusLabelMany : strings.WordBan_StatusLabel
++                        // An edited message names both, in the order they happened: "banned word, edited 12:00"
++                        // rather than the status node's "edited banned word 12:00".
++                        let editedDateIsPrimary = (item.context.getAppConfigValue("message_primary_edited_date") as? Bool) ?? false
++                        if edited && !editedDateIsPrimary && !item.presentationData.isPreview {
++                            label += ", " + strings.Conversation_MessageEditedLabel
++                            edited = false
++                        }
++                        dateText = label + " " + dateText
 +                    }
 +                }
                  
                  if incoming && item.associatedData.isSuspiciousPeer, let entities = messageEntities {
                      messageEntities = entities.filter(\.isShownFromSuspiciousPeer)
-@@ -879,6 +892,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -879,6 +902,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                                  }
                              }
                              strongSelf.textAccessibilityOverlayNode.frame = textFrame
@@ -444,7 +457,7 @@ index 8652b352c5..6f4cb68d6a 100644
                      
                              let showTextAsPlaceholder = item.associatedData.showTextAsPlaceholder
                              if showTextAsPlaceholder {
-@@ -1598,6 +1612,52 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -1598,6 +1622,52 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
          }
      }
      
@@ -497,7 +510,7 @@ index 8652b352c5..6f4cb68d6a 100644
      override public func resignTextSelection() {
          self.cancelTextSelection()
      }
-@@ -1679,6 +1739,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -1679,6 +1749,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                  }
                  
                  textSelectionNode.enableQuote = enableQuote
@@ -532,10 +545,10 @@ index 0000000000..8a83a9581b
 +)
 diff --git a/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift
 new file mode 100644
-index 0000000000..24833ad76e
+index 0000000000..d3c011fd3c
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,319 @@
 +import Foundation
 +import SwiftSignalKit
 +import TelegramCore
@@ -845,6 +858,15 @@ index 0000000000..24833ad76e
 +        }
 +    }
 +    return (result as String, resultEntities, censoredRanges.map { NSRange(location: $0.lowerBound, length: $0.upperBound - $0.lowerBound) })
++}
++
++/// The banned words behind `matches`, each once, in text order: one per ban, however many times or forms it occurs.
++public func wordBanDistinctWords(_ matches: [WordBanMatch]) -> [String] {
++    var words: [String] = []
++    for match in matches where !words.contains(where: { wordBanKey($0) == wordBanKey(match.rule.word) }) {
++        words.append(match.rule.word)
++    }
++    return words
 +}
 diff --git a/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/WordBanCensorStripView.swift b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/WordBanCensorStripView.swift
 new file mode 100644
@@ -2538,7 +2560,7 @@ index 0000000000..8398d167c9
 +    }
 +}
 diff --git a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
-index e9c504df0b..0031270bf5 100644
+index e9c504df0b..3345462c95 100644
 --- a/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 +++ b/submodules/TelegramUI/Sources/ChatInterfaceStateContextMenus.swift
 @@ -41,6 +41,7 @@ import AdsInfoScreen
@@ -2549,7 +2571,7 @@ index e9c504df0b..0031270bf5 100644
   
  private struct MessageContextMenuData {
      let starStatus: Bool?
-@@ -1512,6 +1513,37 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
+@@ -1512,6 +1513,41 @@ func contextMenuForChatPresentationInterfaceState(chatPresentationInterfaceState
              }
          }
          
@@ -2559,17 +2581,21 @@ index e9c504df0b..0031270bf5 100644
 +            if !bannedMatches.isEmpty {
 +                let messageId = message.id
 +                let isRevealed = WordBanStore.shared.isRevealed(messageId: messageId)
-+                actions.append(.action(ContextMenuActionItem(text: isRevealed ? chatPresentationInterfaceState.strings.WordBan_ContextMenu_Hide : chatPresentationInterfaceState.strings.WordBan_ContextMenu_Show, icon: { theme in
++                let bannedWords = wordBanDistinctWords(bannedMatches)
++                let strings = chatPresentationInterfaceState.strings
++                let revealTitle: String
++                if bannedWords.count > 1 {
++                    revealTitle = isRevealed ? strings.WordBan_ContextMenu_HideMany : strings.WordBan_ContextMenu_ShowMany
++                } else {
++                    revealTitle = isRevealed ? strings.WordBan_ContextMenu_Hide : strings.WordBan_ContextMenu_Show
++                }
++                actions.append(.action(ContextMenuActionItem(text: revealTitle, icon: { theme in
 +                    return generateTintedImage(image: UIImage(bundleImageName: isRevealed ? "Chat/Context Menu/EyeLocked" : "Chat/Context Menu/Eye"), color: theme.actionSheet.primaryTextColor)
 +                }, action: { _, f in
 +                    WordBanStore.shared.setRevealed(messageId: messageId, revealed: !isRevealed)
 +                    f(.default)
 +                    controllerInteraction.requestMessageUpdate(messageId, false, nil)
 +                })))
-+                var bannedWords: [String] = []
-+                for match in bannedMatches where !bannedWords.contains(where: { wordBanKey($0) == wordBanKey(match.rule.word) }) {
-+                    bannedWords.append(match.rule.word)
-+                }
 +                for word in bannedWords {
 +                    actions.append(.action(ContextMenuActionItem(text: chatPresentationInterfaceState.strings.WordBan_ContextMenu_Unban(word).string, icon: { theme in
 +                        return generateTintedImage(image: UIImage(bundleImageName: "Chat/Context Menu/Remove"), color: theme.actionSheet.primaryTextColor)
