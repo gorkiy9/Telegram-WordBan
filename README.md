@@ -18,24 +18,30 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 - A horizontal selector of how messages show it, **Visible** by default:
   - **Visible**: the word is not banned; there is no ban button (for a banned word, the button lifts the ban);
   - **Censored**: a strip of paper is pressed over the word from left to right, its free end lifted and bending
-    until it lies flat, slightly tilted, with a soft shadow;
-  - **Replace**: a field for your own text or emoji. The word shrinks and fades downwards, and what you type appears
-    over it character by character, without stretching the letters already shown.
-- Once Censored or Replace is picked, **Ban Word** appears at the bottom and, to its right, how long the ban lasts:
-  1 Day, 1 Week, 1 Month, 3 Months, 6 Months, 1 Year or Forever.
+    until it lies flat, slightly tilted, with a soft shadow, with the same motion as on messages in the chat;
+  - **Replace**: a field for your own text or emoji. Until you type, the word shows in the placeholder colour; then
+    it moves back behind your text (smaller, blurred, fading downwards), and what you type appears in front of it
+    character by character, without stretching the letters already shown.
+- Once Censored or Replace is picked, **Ban Word** appears at the bottom and, to its right, how long the ban lasts,
+  picked on a wheel: 1 Day, 1 Week, 1 Month, 3 Months, 6 Months, 1 Year or Forever.
 - After the ban, a toast with Undo.
 
 ### 3. Messages with a banned word
 
-- Every incoming message in the chat with the word (whole word, any case) covers it with the same strip or replaces
-  it at once, old messages included; strips on messages already on screen are pressed on with the same motion.
+- Every incoming message in the chat with the word (whole word, any case: "deadline", "Deadline", "DEADLINE" and
+  "DeAdLiNe" are one word) covers it with the same strip or replaces it at once, old messages included; strips on messages already on screen are pressed on with the same motion.
+- **Similar Words** (a switch in the sheet, on by default) also catches the word stretched ("Yooou" for "Yo"), its
+  forms ("deadlines", "дедлайнами"; the system lemmatizer from NaturalLanguage, with common Russian and English endings
+  for words it does not know) and its beginning stretched ("Йооо" for "Йоу": at least two letters and two thirds of the
+  word, the last letter repeated). The switch's footer shows an example of each, made from the word being banned.
 - The message's status line says **banned word**, next to the time, the way it says "edited".
 - The message's context menu has **Show Word** (for this message; **Hide Word** puts it back) and **Unban "word"**.
 
 ## How it works
 
 - **Built from the client.** The sheet is `SheetComponent` with `TabSelectorComponent`, `ListTextFieldItemComponent`,
-  `ButtonComponent` and `GlassBarButtonComponent`; the duration picker is the regular context menu, the toasts are `UndoOverlayController`. Colours and fonts come from `PresentationTheme`.
+  `ListSwitchItemComponent`, `ButtonComponent` and `GlassBarButtonComponent`; the duration wheel is the client's
+  `ChatTimerScreen` (as for auto-delete), the toasts are `UndoOverlayController`. Colours and fonts come from `PresentationTheme`.
 - **Display only.** `ChatMessageTextBubbleContentNode` applies the chat's bans to an incoming message's text before
   layout (`wordBanApply`: the replacement with entity ranges shifted, or the ranges to black out, which the bubble
   covers with bars from the text layout's range rects in the message's text colour). The stored
@@ -57,7 +63,7 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 ## Applying the change
 
 `changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
-checkout of that commit (27 files, +1 887 −5):
+checkout of that commit (29 files, +2 263 −5):
 
 ```
 git apply --check changes.patch
@@ -65,7 +71,7 @@ git apply changes.patch
 ```
 
 Key files: `submodules/TelegramUI/Components/Chat/ChatWordBan/` (store and matching),
-`submodules/TelegramUI/Components/Chat/WordBanScreen/` (the sheet), `ChatControllerWordBan.swift` and
+`WordBanSimilar.swift` there (similar words), `submodules/TelegramUI/Components/Chat/WordBanScreen/` (the sheet), `ChatControllerWordBan.swift` and
 `ChatInterfaceStateContextMenus.swift` in `submodules/TelegramUI/Sources/`, the selection menu item in
 `TextSelectionNode.swift`, and the display in `ChatMessageTextBubbleContentNode.swift`.
 
