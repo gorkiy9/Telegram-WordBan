@@ -1,8 +1,8 @@
 # Word Ban: hide a word you don't want to read in a chat
 
 Some words you would rather not see: a colleague's endless "deadline", a spoiler, a name, a slur. Word Ban lets you
-ban a word in one chat, for yourself only. Incoming messages with it keep coming, but the word is hidden under a
-spoiler or replaced with your own text or emoji. The sender and the server know nothing about it.
+ban a word in one chat, for yourself only. Incoming messages with it keep coming, but the word is blacked out or
+replaced with your own text or emoji. The sender and the server know nothing about it.
 
 > Preliminary demo. The demo video is not recorded yet.
 
@@ -14,29 +14,29 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 
 ### 2. The ban sheet
 
-- The word, large, so it is clear what is being banned.
-- A horizontal selector of how messages show it:
-  - **Visible**: the word is not banned (picking it for a banned word lifts the ban);
-  - **Spoiler**: the word hides under Telegram's spoiler dust, a tap reveals it;
-  - **Replace**: a field appears for your own text or emoji to show instead.
-- At the bottom, **Ban Word** and, to its right, how long the ban lasts: 1 Day, 1 Week, 1 Month, 3 Months, 6 Months,
-  1 Year or Forever.
+- The word, large, previewing the choice below it.
+- A horizontal selector of how messages show it, **Visible** by default:
+  - **Visible**: the word is not banned; there is no ban button (for a banned word, the button lifts the ban);
+  - **Censored**: a solid bar covers the word, as a censor would strike it out;
+  - **Replace**: a field for your own text or emoji. The word fades, and what you type covers its lower half.
+- Once Censored or Replace is picked, **Ban Word** appears at the bottom and, to its right, how long the ban lasts:
+  1 Day, 1 Week, 1 Month, 3 Months, 6 Months, 1 Year or Forever.
 - After the ban, a toast with Undo.
 
 ### 3. Messages with a banned word
 
-- Every incoming message in the chat with the word (whole word, any case) hides or replaces it at once, old messages
-  included.
+- Every incoming message in the chat with the word (whole word, any case) blacks it out or replaces it at once, old
+  messages included.
 - The message's status line says **banned word**, next to the time, the way it says "edited".
 - The message's context menu has **Show Word** (for this message; **Hide Word** puts it back) and **Unban "word"**.
 
 ## How it works
 
 - **Built from the client.** The sheet is `SheetComponent` with `TabSelectorComponent`, `ListTextFieldItemComponent`,
-  `ButtonComponent` and `GlassBarButtonComponent`; the duration picker is the regular context menu, the hiding is the
-  existing spoiler entity, toasts are `UndoOverlayController`. Colours and fonts come from `PresentationTheme`.
+  `ButtonComponent` and `GlassBarButtonComponent`; the duration picker is the regular context menu, the toasts are `UndoOverlayController`. Colours and fonts come from `PresentationTheme`.
 - **Display only.** `ChatMessageTextBubbleContentNode` applies the chat's bans to an incoming message's text before
-  layout (`wordBanApply`: a spoiler entity over the word, or the replacement with entity ranges shifted). The stored
+  layout (`wordBanApply`: the replacement with entity ranges shifted, or the ranges to black out, which the bubble
+  covers with bars from the text layout's range rects in the message's text colour). The stored
   message is never changed; copy, reply and forward use the original text.
 - **No server changes.** Bans are kept on the device (`WordBanStore`, `UserDefaults`), per chat, with an end date. A real
   version would sync them across devices:
@@ -55,7 +55,7 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 ## Applying the change
 
 `changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
-checkout of that commit (25 files, +1 397 −5):
+checkout of that commit (25 files, +1 490 −5):
 
 ```
 git apply --check changes.patch

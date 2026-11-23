@@ -1,5 +1,5 @@
 diff --git a/Telegram/Telegram-iOS/en.lproj/Localizable.strings b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
-index 0c6e4e28f1..73655177ba 100644
+index 0c6e4e28f1..9eee5c4c9f 100644
 --- a/Telegram/Telegram-iOS/en.lproj/Localizable.strings
 +++ b/Telegram/Telegram-iOS/en.lproj/Localizable.strings
 @@ -17342,3 +17342,29 @@ Error: %8$@";
@@ -11,10 +11,10 @@ index 0c6e4e28f1..73655177ba 100644
 +"WordBan.StatusLabel" = "banned word";
 +"WordBan.Title" = "Ban a Word";
 +"WordBan.Mode.Visible" = "Visible";
-+"WordBan.Mode.Spoiler" = "Spoiler";
++"WordBan.Mode.Censored" = "Censored";
 +"WordBan.Mode.Replace" = "Replace";
-+"WordBan.Info.Visible" = "Incoming messages in this chat show the word as it is.";
-+"WordBan.Info.Spoiler" = "Incoming messages in this chat hide the word under a spoiler. Only you see this.";
++"WordBan.Info.Visible" = "Incoming messages in this chat show the word as it is. Pick Censored or Replace to ban it.";
++"WordBan.Info.Censored" = "Incoming messages in this chat black out the word, like a censor's marker. Only you see this.";
 +"WordBan.Info.Replace" = "Incoming messages in this chat show your text or emoji instead of the word. Only you see this.";
 +"WordBan.ReplacePlaceholder" = "Text or emoji";
 +"WordBan.Ban" = "Ban Word";
@@ -375,7 +375,7 @@ index c0c2f2abaa..027533af54 100644
          "//submodules/TelegramUI/Components/ShimmeringMask",
          "//submodules/TelegramUI/Components/StreamingTextReveal:StreamingTextReveal",
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
-index 8652b352c5..ee2bbeafe6 100644
+index 8652b352c5..6bfb8cba48 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 @@ -28,6 +28,7 @@ import InteractiveTextComponent
@@ -395,24 +395,74 @@ index 8652b352c5..ee2bbeafe6 100644
                  
                  let statusType: ChatMessageDateAndStatusType?
                  var displayStatus = false
-@@ -427,6 +428,16 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -427,6 +428,18 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                      }
                  }
                  
-+                // Words the user banned in this chat: hidden under a spoiler or replaced, until the user shows them for
-+                // this message. The status line says that the message has one, the way it says "edited".
++                // Words the user banned in this chat: blacked out or replaced, until the user shows them for this
++                // message. The status line says that the message has one, the way it says "edited".
++                var wordBanCensoredRanges: [NSRange] = []
 +                if incoming && invoice == nil && story == nil && !item.presentationData.isPreview && !WordBanStore.shared.isRevealed(messageId: item.message.id) {
 +                    let wordBanRules = WordBanStore.shared.rules(peerId: item.message.id.peerId)
 +                    if !wordBanRules.isEmpty, let applied = wordBanApply(text: rawText, entities: messageEntities, rules: wordBanRules) {
 +                        rawText = applied.text
 +                        messageEntities = applied.entities
++                        wordBanCensoredRanges = applied.censoredRanges
 +                        dateText = item.presentationData.strings.WordBan_StatusLabel + " " + dateText
 +                    }
 +                }
                  
                  if incoming && item.associatedData.isSuspiciousPeer, let entities = messageEntities {
                      messageEntities = entities.filter(\.isShownFromSuspiciousPeer)
-@@ -1679,6 +1690,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -879,6 +892,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+                                 }
+                             }
+                             strongSelf.textAccessibilityOverlayNode.frame = textFrame
++                            strongSelf.updateWordBanCensorBars(ranges: wordBanCensoredRanges, textLayout: textLayout, color: messageTheme.primaryTextColor)
+                     
+                             let showTextAsPlaceholder = item.associatedData.showTextAsPlaceholder
+                             if showTextAsPlaceholder {
+@@ -1598,6 +1612,39 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+         }
+     }
+     
++    /// Bars over censored banned words, drawn above the text in the text node's coordinates.
++    private var wordBanCensorBarViews: [UIView] = []
++
++    private func updateWordBanCensorBars(ranges: [NSRange], textLayout: InteractiveTextNodeLayout, color: UIColor) {
++        var rects: [CGRect] = []
++        for range in ranges {
++            if let result = textLayout.rangeRects(in: range) {
++                rects.append(contentsOf: result.rects)
++            }
++        }
++        while self.wordBanCensorBarViews.count > rects.count {
++            self.wordBanCensorBarViews.removeLast().removeFromSuperview()
++        }
++        for (index, rect) in rects.enumerated() {
++            let barView: UIView
++            if index < self.wordBanCensorBarViews.count {
++                barView = self.wordBanCensorBarViews[index]
++            } else {
++                barView = UIView()
++                barView.isUserInteractionEnabled = false
++                barView.layer.cornerRadius = 2.0
++                self.wordBanCensorBarViews.append(barView)
++            }
++            if barView.superview !== self.textNode.textNode.view {
++                self.textNode.textNode.view.addSubview(barView)
++            } else {
++                self.textNode.textNode.view.bringSubviewToFront(barView)
++            }
++            barView.backgroundColor = color
++            barView.frame = rect.insetBy(dx: -1.0, dy: 1.0)
++        }
++    }
++
+     override public func resignTextSelection() {
+         self.cancelTextSelection()
+     }
+@@ -1679,6 +1726,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                  }
                  
                  textSelectionNode.enableQuote = enableQuote
@@ -447,10 +497,10 @@ index 0000000000..8a83a9581b
 +)
 diff --git a/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift
 new file mode 100644
-index 0000000000..5ce6b82cec
+index 0000000000..76361f20f7
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/ChatWordBan.swift
-@@ -0,0 +1,242 @@
+@@ -0,0 +1,240 @@
 +import Foundation
 +import SwiftSignalKit
 +import TelegramCore
@@ -458,8 +508,8 @@ index 0000000000..5ce6b82cec
 +/// One-sided word ban: a word the user does not want to read in one chat. It only changes how this device shows
 +/// incoming messages; the other side and the server know nothing about it.
 +public enum WordBanMode: Int32, Codable, Equatable {
-+    /// Hidden under the system spoiler (the dust a tap reveals).
-+    case spoiler = 1
++    /// Blacked out: a solid bar over the word, as a censor would strike it.
++    case censor = 1
 +    /// Shown as the user's own text or emoji.
 +    case replace = 2
 +}
@@ -642,24 +692,25 @@ index 0000000000..5ce6b82cec
 +    return result.sorted(by: { $0.range.location < $1.range.location })
 +}
 +
-+/// The text a message shows with its banned words applied: spoilers over hidden words, the user's text in place of
-+/// replaced ones. Entity ranges move with the replacements. Nil when the text has no banned word.
-+public func wordBanApply(text: String, entities: [MessageTextEntity]?, rules: [WordBanRule]) -> (text: String, entities: [MessageTextEntity])? {
++/// The text a message shows with its banned words applied: the user's text in place of replaced words, and the ranges
++/// (in the resulting text) of censored words, which the bubble covers with bars. Entity ranges move with the
++/// replacements. Nil when the text has no banned word.
++public func wordBanApply(text: String, entities: [MessageTextEntity]?, rules: [WordBanRule]) -> (text: String, entities: [MessageTextEntity], censoredRanges: [NSRange])? {
 +    let matches = wordBanMatches(text: text, rules: rules)
 +    if matches.isEmpty {
 +        return nil
 +    }
 +    let result = NSMutableString(string: text)
 +    var resultEntities = entities ?? []
-+    var spoilerRanges: [Range<Int>] = []
++    var censoredRanges: [Range<Int>] = []
 +
 +    // From the end, so earlier ranges stay valid while later ones change length.
 +    for match in matches.reversed() {
 +        let start = match.range.location
 +        let end = match.range.location + match.range.length
 +        switch match.rule.mode {
-+        case .spoiler:
-+            spoilerRanges.append(start ..< end)
++        case .censor:
++            censoredRanges.append(start ..< end)
 +        case .replace:
 +            let replacement = match.rule.replacement ?? ""
 +            let replacementLength = (replacement as NSString).length
@@ -685,13 +736,10 @@ index 0000000000..5ce6b82cec
 +                entity.range = newLower ..< newUpper
 +                return entity
 +            }
-+            spoilerRanges = spoilerRanges.map { ($0.lowerBound + delta) ..< ($0.upperBound + delta) }
++            censoredRanges = censoredRanges.map { ($0.lowerBound + delta) ..< ($0.upperBound + delta) }
 +        }
 +    }
-+    for range in spoilerRanges {
-+        resultEntities.append(MessageTextEntity(range: range, type: .Spoiler))
-+    }
-+    return (result as String, resultEntities)
++    return (result as String, resultEntities, censoredRanges.map { NSRange(location: $0.lowerBound, length: $0.upperBound - $0.lowerBound) })
 +}
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/BUILD b/submodules/TelegramUI/Components/Chat/WordBanScreen/BUILD
 new file mode 100644
@@ -738,10 +786,10 @@ index 0000000000..ce745c6681
 +)
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
 new file mode 100644
-index 0000000000..4d78e0bf45
+index 0000000000..beaa24c934
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
-@@ -0,0 +1,623 @@
+@@ -0,0 +1,682 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -770,15 +818,15 @@ index 0000000000..4d78e0bf45
 +/// What the sheet shows for the word: left as is, or banned in one of two ways.
 +private enum WordBanOption: Int, Equatable {
 +    case visible = 0
-+    case spoiler = 1
++    case censor = 1
 +    case replace = 2
 +
 +    init(mode: WordBanMode?) {
 +        switch mode {
 +        case .none:
 +            self = .visible
-+        case .spoiler:
-+            self = .spoiler
++        case .censor:
++            self = .censor
 +        case .replace:
 +            self = .replace
 +        }
@@ -839,8 +887,8 @@ index 0000000000..4d78e0bf45
 +        weak var controller: ViewController?
 +
 +        init(initialRule: WordBanRule?) {
-+            // A new ban starts on Spoiler: Visible is the word's state before any ban.
-+            self.option = initialRule.flatMap { WordBanOption(mode: $0.mode) } ?? .spoiler
++            // A word without a ban starts on Visible, its current state; the ban button shows once a ban is picked.
++            self.option = WordBanOption(mode: initialRule?.mode)
 +            self.replacement = initialRule?.replacement ?? ""
 +            self.duration = initialRule?.duration ?? .week
 +            super.init()
@@ -885,6 +933,8 @@ index 0000000000..4d78e0bf45
 +        let closeButton = Child(GlassBarButtonComponent.self)
 +        let title = Child(MultilineTextComponent.self)
 +        let word = Child(MultilineTextComponent.self)
++        let censorBar = Child(Rectangle.self)
++        let replacementPreview = Child(MultilineTextComponent.self)
 +        let optionSelector = Child(TabSelectorComponent.self)
 +        let info = Child(MultilineTextComponent.self)
 +        let replacementSection = Child(ListSectionComponent.self)
@@ -894,7 +944,7 @@ index 0000000000..4d78e0bf45
 +        return { context in
 +            let environment = context.environment[ViewControllerComponentContainer.Environment.self].value
 +            let component = context.component
-+            let theme = environment.theme.withModalBlocksBackground()
++            let theme = environment.theme
 +            let strings = environment.strings
 +            let state = context.state
 +            if state.controller == nil {
@@ -943,21 +993,68 @@ index 0000000000..4d78e0bf45
 +            )
 +            contentHeight += 44.0
 +
-+            // The word itself, large: the user checks at a glance which word the ban is about.
++            // The word itself, large, previewing the picked option: as is, blacked out, or faded under the user's text.
++            let wordFont = Font.bold(34.0)
 +            let word = word.update(
 +                component: MultilineTextComponent(
-+                    text: .plain(NSAttributedString(string: component.word, font: Font.bold(34.0), textColor: theme.list.itemPrimaryTextColor)),
++                    text: .plain(NSAttributedString(string: component.word, font: wordFont, textColor: theme.list.itemPrimaryTextColor)),
 +                    horizontalAlignment: .center,
 +                    truncationType: .end,
-+                    maximumNumberOfLines: 2
++                    maximumNumberOfLines: 1
 +                ),
 +                availableSize: CGSize(width: context.availableSize.width - textSideInset * 2.0, height: CGFloat.greatestFiniteMagnitude),
 +                transition: .immediate
 +            )
++            let wordFrame = CGRect(origin: CGPoint(x: floor((context.availableSize.width - word.size.width) / 2.0), y: contentHeight), size: word.size)
 +            context.add(word
-+                .position(CGPoint(x: context.availableSize.width / 2.0, y: contentHeight + word.size.height / 2.0))
++                .position(wordFrame.center)
++                .opacity(state.option == .replace ? 0.3 : 1.0)
 +            )
-+            contentHeight += word.size.height + 20.0
++
++            if state.option == .censor {
++                let barFrame = wordFrame.insetBy(dx: -4.0, dy: 4.0)
++                let censorBar = censorBar.update(
++                    component: Rectangle(color: theme.list.itemPrimaryTextColor),
++                    availableSize: barFrame.size,
++                    transition: .immediate
++                )
++                context.add(censorBar
++                    .position(barFrame.center)
++                    .cornerRadius(4.0)
++                    .appear(ComponentTransition.Appear { _, view, transition in
++                        if case .none = transition.animation {
++                            return
++                        }
++                        view.layer.animateScaleX(from: 0.001, to: 1.0, duration: 0.25)
++                        view.layer.animatePosition(from: CGPoint(x: -barFrame.width / 2.0, y: 0.0), to: CGPoint(), duration: 0.25, additive: true)
++                    })
++                    .disappear(.default(alpha: true))
++                )
++            }
++
++            // Replace: the user's text, as large, covers the lower half of the faded word.
++            var wordAreaHeight = word.size.height
++            if state.option == .replace {
++                wordAreaHeight += floor(word.size.height * 0.5)
++                if !state.replacement.isEmpty {
++                    let replacementPreview = replacementPreview.update(
++                        component: MultilineTextComponent(
++                            text: .plain(NSAttributedString(string: state.replacement, font: wordFont, textColor: theme.list.itemPrimaryTextColor)),
++                            horizontalAlignment: .center,
++                            truncationType: .end,
++                            maximumNumberOfLines: 1
++                        ),
++                        availableSize: CGSize(width: context.availableSize.width - textSideInset * 2.0, height: CGFloat.greatestFiniteMagnitude),
++                        transition: .immediate
++                    )
++                    context.add(replacementPreview
++                        .position(CGPoint(x: context.availableSize.width / 2.0, y: wordFrame.maxY))
++                        .appear(.default(scale: true, alpha: true))
++                        .disappear(.default(scale: true, alpha: true))
++                    )
++                }
++            }
++            contentHeight += wordAreaHeight + 20.0
 +
 +            let optionSelector = optionSelector.update(
 +                component: TabSelectorComponent(
@@ -974,7 +1071,7 @@ index 0000000000..4d78e0bf45
 +                    ),
 +                    items: [
 +                        TabSelectorComponent.Item(id: AnyHashable(WordBanOption.visible.rawValue), title: strings.WordBan_Mode_Visible),
-+                        TabSelectorComponent.Item(id: AnyHashable(WordBanOption.spoiler.rawValue), title: strings.WordBan_Mode_Spoiler),
++                        TabSelectorComponent.Item(id: AnyHashable(WordBanOption.censor.rawValue), title: strings.WordBan_Mode_Censored),
 +                        TabSelectorComponent.Item(id: AnyHashable(WordBanOption.replace.rawValue), title: strings.WordBan_Mode_Replace)
 +                    ],
 +                    selectedId: AnyHashable(state.option.rawValue),
@@ -1010,8 +1107,8 @@ index 0000000000..4d78e0bf45
 +            switch state.option {
 +            case .visible:
 +                infoText = strings.WordBan_Info_Visible
-+            case .spoiler:
-+                infoText = strings.WordBan_Info_Spoiler
++            case .censor:
++                infoText = strings.WordBan_Info_Censored
 +            case .replace:
 +                infoText = strings.WordBan_Info_Replace
 +            }
@@ -1037,6 +1134,7 @@ index 0000000000..4d78e0bf45
 +                    component: ListSectionComponent(
 +                        theme: theme,
 +                        style: .glass,
++                        backgroundColor: theme.list.itemInputField.backgroundColor,
 +                        header: nil,
 +                        footer: nil,
 +                        items: [
@@ -1054,11 +1152,8 @@ index 0000000000..4d78e0bf45
 +                                    guard let state else {
 +                                        return
 +                                    }
-+                                    let wasEmpty = state.replacement.isEmpty
 +                                    state.replacement = value
-+                                    if wasEmpty != value.isEmpty {
-+                                        state.updated(transition: .easeInOut(duration: 0.2))
-+                                    }
++                                    state.updated(transition: .easeInOut(duration: 0.2))
 +                                },
 +                                onReturn: { [weak state] in
 +                                    guard let state, !state.replacement.isEmpty else {
@@ -1151,15 +1246,27 @@ index 0000000000..4d78e0bf45
 +                availableSize: CGSize(width: banButtonWidth, height: 52.0),
 +                transition: context.transition
 +            )
-+            context.add(banButton
-+                .position(CGPoint(x: buttonInsets.left + banButton.size.width / 2.0, y: contentHeight + banButton.size.height / 2.0))
-+            )
-+            context.add(durationButton
-+                .position(CGPoint(x: context.availableSize.width - buttonInsets.right - durationButtonWidth / 2.0, y: contentHeight + 26.0))
-+                .scale(hasDurationButton ? 1.0 : 0.01)
-+                .opacity(hasDurationButton ? 1.0 : 0.0)
-+            )
-+            contentHeight += 52.0
++            // Visible on a word without a ban changes nothing, so there is no button to press.
++            let showsBanButton = !(state.option == .visible && component.initialRule == nil)
++            if showsBanButton {
++                context.add(banButton
++                    .position(CGPoint(x: buttonInsets.left + banButton.size.width / 2.0, y: contentHeight + banButton.size.height / 2.0))
++                    .appear(.default(scale: true, alpha: true))
++                    .disappear(.default(scale: true, alpha: true))
++                )
++            }
++            if hasDurationButton {
++                context.add(durationButton
++                    .position(CGPoint(x: context.availableSize.width - buttonInsets.right - durationButtonWidth / 2.0, y: contentHeight + 26.0))
++                    .appear(.default(scale: true, alpha: true))
++                    .disappear(.default(scale: true, alpha: true))
++                )
++            }
++            if showsBanButton {
++                contentHeight += 52.0
++            } else {
++                contentHeight -= 16.0
++            }
 +
 +            if environment.inputHeight > 0.0 {
 +                contentHeight += 15.0
@@ -1237,7 +1344,7 @@ index 0000000000..4d78e0bf45
 +                        }
 +                    )),
 +                    style: .glass,
-+                    backgroundColor: .color(environment.theme.list.modalBlocksBackgroundColor),
++                    backgroundColor: .color(environment.theme.actionSheet.opaqueItemBackgroundColor),
 +                    followContentSizeChanges: true,
 +                    clipsContent: true,
 +                    isScrollEnabled: false,
@@ -1330,7 +1437,7 @@ index 0000000000..4d78e0bf45
 +                WordBanStore.shared.removeRule(peerId: self.peerId, word: self.word)
 +                self.completion(.unbanned(word: self.word))
 +            }
-+        case .spoiler, .replace:
++        case .censor, .replace:
 +            let trimmedReplacement = replacement.trimmingCharacters(in: .whitespacesAndNewlines)
 +            if option == .replace && trimmedReplacement.isEmpty {
 +                if let view = self.node.hostView.findTaggedView(tag: replacementFieldTag) as? ListTextFieldItemComponent.View {
@@ -1347,7 +1454,7 @@ index 0000000000..4d78e0bf45
 +            }
 +            let rule = WordBanRule(
 +                word: self.word,
-+                mode: option == .spoiler ? .spoiler : .replace,
++                mode: option == .censor ? .censor : .replace,
 +                replacement: option == .replace ? trimmedReplacement : nil,
 +                duration: duration,
 +                expiresAt: expiresAt
