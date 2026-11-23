@@ -375,7 +375,7 @@ index c0c2f2abaa..027533af54 100644
          "//submodules/TelegramUI/Components/ShimmeringMask",
          "//submodules/TelegramUI/Components/StreamingTextReveal:StreamingTextReveal",
 diff --git a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
-index 8652b352c5..6bfb8cba48 100644
+index 8652b352c5..6f4cb68d6a 100644
 --- a/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 +++ b/submodules/TelegramUI/Components/Chat/ChatMessageTextBubbleContentNode/Sources/ChatMessageTextBubbleContentNode.swift
 @@ -28,6 +28,7 @@ import InteractiveTextComponent
@@ -418,51 +418,64 @@ index 8652b352c5..6bfb8cba48 100644
                                  }
                              }
                              strongSelf.textAccessibilityOverlayNode.frame = textFrame
-+                            strongSelf.updateWordBanCensorBars(ranges: wordBanCensoredRanges, textLayout: textLayout, color: messageTheme.primaryTextColor)
++                            strongSelf.updateWordBanCensorBars(ranges: wordBanCensoredRanges, textLayout: textLayout, color: messageTheme.primaryTextColor, messageId: item.message.id)
                      
                              let showTextAsPlaceholder = item.associatedData.showTextAsPlaceholder
                              if showTextAsPlaceholder {
-@@ -1598,6 +1612,39 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -1598,6 +1612,52 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
          }
      }
      
-+    /// Bars over censored banned words, drawn above the text in the text node's coordinates.
-+    private var wordBanCensorBarViews: [UIView] = []
++    /// Strips over censored banned words, drawn above the text in the text node's coordinates.
++    private var wordBanCensorBarViews: [WordBanCensorStripView] = []
++    private var wordBanCensorBarsMessageId: EngineMessage.Id?
 +
-+    private func updateWordBanCensorBars(ranges: [NSRange], textLayout: InteractiveTextNodeLayout, color: UIColor) {
++    private func updateWordBanCensorBars(ranges: [NSRange], textLayout: InteractiveTextNodeLayout, color: UIColor, messageId: EngineMessage.Id) {
 +        var rects: [CGRect] = []
 +        for range in ranges {
 +            if let result = textLayout.rangeRects(in: range) {
 +                rects.append(contentsOf: result.rects)
 +            }
 +        }
++        // A strip pressed on while the message is already on screen (the ban was just set) animates; a message that
++        // comes into view with the ban in place shows its strips laid.
++        let animateNewStrips = self.wordBanCensorBarsMessageId == messageId
++        self.wordBanCensorBarsMessageId = messageId
++
 +        while self.wordBanCensorBarViews.count > rects.count {
 +            self.wordBanCensorBarViews.removeLast().removeFromSuperview()
 +        }
 +        for (index, rect) in rects.enumerated() {
-+            let barView: UIView
++            let stripView: WordBanCensorStripView
++            var isNew = false
 +            if index < self.wordBanCensorBarViews.count {
-+                barView = self.wordBanCensorBarViews[index]
++                stripView = self.wordBanCensorBarViews[index]
 +            } else {
-+                barView = UIView()
-+                barView.isUserInteractionEnabled = false
-+                barView.layer.cornerRadius = 2.0
-+                self.wordBanCensorBarViews.append(barView)
++                stripView = WordBanCensorStripView()
++                self.wordBanCensorBarViews.append(stripView)
++                isNew = true
 +            }
-+            if barView.superview !== self.textNode.textNode.view {
-+                self.textNode.textNode.view.addSubview(barView)
++            if stripView.superview !== self.textNode.textNode.view {
++                self.textNode.textNode.view.addSubview(stripView)
 +            } else {
-+                self.textNode.textNode.view.bringSubviewToFront(barView)
++                self.textNode.textNode.view.bringSubviewToFront(stripView)
 +            }
-+            barView.backgroundColor = color
-+            barView.frame = rect.insetBy(dx: -1.0, dy: 1.0)
++            stripView.color = color
++            // Covers the glyphs; neighbouring strips lean opposite ways, as if laid by hand.
++            let stripFrame = rect.insetBy(dx: -1.5, dy: floor(rect.height * 0.1))
++            stripView.bounds = CGRect(origin: CGPoint(), size: stripFrame.size)
++            stripView.center = CGPoint(x: stripFrame.midX, y: stripFrame.midY)
++            stripView.update(size: stripFrame.size, tilt: index % 2 == 0 ? WordBanCensorStripView.defaultTilt : -WordBanCensorStripView.defaultTilt * 0.7)
++            if isNew && animateNewStrips {
++                stripView.animateIn(delay: Double(index) * 0.04)
++            }
 +        }
 +    }
 +
      override public func resignTextSelection() {
          self.cancelTextSelection()
      }
-@@ -1679,6 +1726,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
+@@ -1679,6 +1739,7 @@ public class ChatMessageTextBubbleContentNode: ChatMessageBubbleContentNode {
                  }
                  
                  textSelectionNode.enableQuote = enableQuote
@@ -741,6 +754,154 @@ index 0000000000..76361f20f7
 +    }
 +    return (result as String, resultEntities, censoredRanges.map { NSRange(location: $0.lowerBound, length: $0.upperBound - $0.lowerBound) })
 +}
+diff --git a/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/WordBanCensorStripView.swift b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/WordBanCensorStripView.swift
+new file mode 100644
+index 0000000000..8a932a6f45
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Chat/ChatWordBan/Sources/WordBanCensorStripView.swift
+@@ -0,0 +1,142 @@
++import Foundation
++import UIKit
++
++/// The censor bar over a banned word: a strip of paper laid across it. It is slightly tilted and casts a soft shadow,
++/// and when it appears it is pressed on from left to right: the part not yet stuck down is lifted and bent, and
++/// settles flat as the strip reaches the end.
++public final class WordBanCensorStripView: UIView {
++    /// The strip's tilt, counter-clockwise (the Figma reference: 1.35°).
++    public static let defaultTilt: CGFloat = -1.35 * .pi / 180.0
++
++    private let shapeLayer = CAShapeLayer()
++    private var currentSize = CGSize()
++
++    public var color: UIColor = .black {
++        didSet {
++            self.shapeLayer.fillColor = self.color.cgColor
++        }
++    }
++
++    override public init(frame: CGRect) {
++        super.init(frame: frame)
++
++        self.isUserInteractionEnabled = false
++        self.layer.addSublayer(self.shapeLayer)
++        self.shapeLayer.fillColor = self.color.cgColor
++        self.shapeLayer.shadowColor = UIColor.black.cgColor
++        self.shapeLayer.shadowOpacity = 0.24
++        self.shapeLayer.shadowRadius = 4.0
++        self.shapeLayer.shadowOffset = CGSize(width: 0.0, height: 2.0)
++    }
++
++    required public init?(coder: NSCoder) {
++        fatalError("init(coder:) has not been implemented")
++    }
++
++    /// Lays the strip out flat at `size` (set the view's bounds and center from outside; the tilt is a transform).
++    public func update(size: CGSize, tilt: CGFloat = WordBanCensorStripView.defaultTilt) {
++        self.transform = CGAffineTransform(rotationAngle: tilt)
++        if self.currentSize == size {
++            // A relayout of the same strip keeps a press-on animation running.
++            return
++        }
++        self.currentSize = size
++        self.shapeLayer.frame = CGRect(origin: CGPoint(), size: size)
++        self.shapeLayer.removeAnimation(forKey: "path")
++        self.shapeLayer.removeAnimation(forKey: "shadowOpacity")
++        self.shapeLayer.path = WordBanCensorStripView.path(size: size, progress: 1.0)
++    }
++
++    /// Presses the strip on from left to right. Under Reduce Motion it fades in instead.
++    public func animateIn(duration: Double = 0.45, delay: Double = 0.0) {
++        let size = self.currentSize
++        if size.width <= 0.0 || size.height <= 0.0 {
++            return
++        }
++        if UIAccessibility.isReduceMotionEnabled {
++            self.layer.animateAlphaFade(duration: 0.2, delay: delay)
++            return
++        }
++
++        // A critically damped spring on the progress: fast start, soft landing, no overshoot past the word.
++        let frameCount = 36
++        let omega = 9.0 / duration
++        var paths: [CGPath] = []
++        var shadows: [NSNumber] = []
++        for i in 0 ... frameCount {
++            let t = duration * Double(i) / Double(frameCount)
++            let progress = i == frameCount ? 1.0 : 1.0 - (1.0 + omega * t) * exp(-omega * t)
++            paths.append(WordBanCensorStripView.path(size: size, progress: CGFloat(progress)))
++            // A lifted flap throws a deeper shadow.
++            shadows.append(NSNumber(value: 0.24 + 0.16 * (1.0 - progress)))
++        }
++
++        let pathAnimation = CAKeyframeAnimation(keyPath: "path")
++        pathAnimation.values = paths
++        pathAnimation.duration = duration
++        pathAnimation.beginTime = CACurrentMediaTime() + delay
++        pathAnimation.fillMode = .backwards
++        pathAnimation.calculationMode = .linear
++        self.shapeLayer.add(pathAnimation, forKey: "path")
++
++        let shadowAnimation = CAKeyframeAnimation(keyPath: "shadowOpacity")
++        shadowAnimation.values = shadows
++        shadowAnimation.duration = duration
++        shadowAnimation.beginTime = pathAnimation.beginTime
++        shadowAnimation.fillMode = .backwards
++        self.shapeLayer.add(shadowAnimation, forKey: "shadowOpacity")
++    }
++
++    /// The strip with its first `progress` of the length stuck down. The rest is a flap lifted off the surface: it bends
++    /// up along a curve and is drawn a little thicker, being closer to the eye. Every path has the same number of
++    /// points, so the keyframes interpolate smoothly.
++    static func path(size: CGSize, progress: CGFloat) -> CGPath {
++        let length = size.width
++        let thickness = size.height
++        let progress = max(0.0, min(1.0, progress))
++
++        let attached = length * progress
++        let flapLength = min(length - attached, max(thickness * 2.4, length * 0.35) * (1.0 - progress))
++        let lift = thickness * 1.3 * (1.0 - progress)
++
++        let sampleCount = 10
++        var top: [CGPoint] = []
++        var bottom: [CGPoint] = []
++
++        // The stuck part: a flat run from the left edge to the attachment line.
++        top.append(CGPoint(x: 0.0, y: 0.0))
++        bottom.append(CGPoint(x: 0.0, y: thickness))
++        for i in 0 ... sampleCount {
++            let f = CGFloat(i) / CGFloat(sampleCount)
++            let x = attached + flapLength * f
++            let bend = f * f
++            let dy = -lift * bend
++            let grow = thickness * 0.18 * bend * (1.0 - progress)
++            top.append(CGPoint(x: x, y: dy - grow * 0.5))
++            bottom.append(CGPoint(x: x, y: thickness + dy + grow * 0.5))
++        }
++
++        let path = CGMutablePath()
++        path.move(to: top[0])
++        for point in top.dropFirst() {
++            path.addLine(to: point)
++        }
++        for point in bottom.reversed() {
++            path.addLine(to: point)
++        }
++        path.closeSubpath()
++        return path
++    }
++}
++
++private extension CALayer {
++    func animateAlphaFade(duration: Double, delay: Double) {
++        let animation = CABasicAnimation(keyPath: "opacity")
++        animation.fromValue = 0.0
++        animation.toValue = 1.0
++        animation.duration = duration
++        animation.beginTime = CACurrentMediaTime() + delay
++        animation.fillMode = .backwards
++        self.add(animation, forKey: "opacity")
++    }
++}
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/BUILD b/submodules/TelegramUI/Components/Chat/WordBanScreen/BUILD
 new file mode 100644
 index 0000000000..ce745c6681
@@ -784,12 +945,270 @@ index 0000000000..ce745c6681
 +        "//visibility:public",
 +    ],
 +)
+diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanPreviewComponents.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanPreviewComponents.swift
+new file mode 100644
+index 0000000000..895df46a92
+--- /dev/null
++++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanPreviewComponents.swift
+@@ -0,0 +1,252 @@
++import Foundation
++import UIKit
++import CoreText
++import Display
++import ComponentFlow
++import ChatWordBan
++
++/// The censor strip in the sheet's preview: pressed on when Censored is picked, laid flat when the sheet opens on it.
++final class WordBanCensorStripComponent: Component {
++    let color: UIColor
++
++    init(color: UIColor) {
++        self.color = color
++    }
++
++    static func ==(lhs: WordBanCensorStripComponent, rhs: WordBanCensorStripComponent) -> Bool {
++        return lhs.color.isEqual(rhs.color)
++    }
++
++    final class View: UIView {
++        private let stripView = WordBanCensorStripView()
++        private var isLaidOut = false
++
++        override init(frame: CGRect) {
++            super.init(frame: frame)
++            self.addSubview(self.stripView)
++        }
++
++        required init?(coder: NSCoder) {
++            fatalError("init(coder:) has not been implemented")
++        }
++
++        func update(component: WordBanCensorStripComponent, availableSize: CGSize, transition: ComponentTransition) -> CGSize {
++            self.stripView.color = component.color
++            self.stripView.bounds = CGRect(origin: CGPoint(), size: availableSize)
++            self.stripView.center = CGPoint(x: availableSize.width / 2.0, y: availableSize.height / 2.0)
++            self.stripView.update(size: availableSize)
++            if !self.isLaidOut {
++                self.isLaidOut = true
++                if case .none = transition.animation {
++                } else {
++                    self.stripView.animateIn()
++                }
++            }
++            return availableSize
++        }
++    }
++
++    func makeView() -> View {
++        return View(frame: CGRect())
++    }
++
++    func update(view: View, availableSize: CGSize, state: EmptyComponentState, environment: Environment<Empty>, transition: ComponentTransition) -> CGSize {
++        return view.update(component: self, availableSize: availableSize, transition: transition)
++    }
++}
++
++/// The banned word under its replacement: it shrinks and fades out downwards as soon as the user types, so the new
++/// word reads on top of it. Scaling is a uniform transform, so the letters never stretch.
++final class WordBanFadedWordComponent: Component {
++    let text: String
++    let font: UIFont
++    let color: UIColor
++    let isFaded: Bool
++
++    init(text: String, font: UIFont, color: UIColor, isFaded: Bool) {
++        self.text = text
++        self.font = font
++        self.color = color
++        self.isFaded = isFaded
++    }
++
++    static func ==(lhs: WordBanFadedWordComponent, rhs: WordBanFadedWordComponent) -> Bool {
++        return lhs.text == rhs.text && lhs.font == rhs.font && lhs.color.isEqual(rhs.color) && lhs.isFaded == rhs.isFaded
++    }
++
++    /// The reference sizes: 34 pt for the word, 28 pt once a replacement covers it.
++    private static let fadedScale: CGFloat = 28.0 / 34.0
++
++    final class View: UIView {
++        private let label = UILabel()
++        private let maskLayer = CAGradientLayer()
++
++        override init(frame: CGRect) {
++            super.init(frame: frame)
++            self.addSubview(self.label)
++            self.maskLayer.startPoint = CGPoint(x: 0.5, y: 0.0)
++            self.maskLayer.endPoint = CGPoint(x: 0.5, y: 1.0)
++            self.label.layer.mask = self.maskLayer
++        }
++
++        required init?(coder: NSCoder) {
++            fatalError("init(coder:) has not been implemented")
++        }
++
++        func update(component: WordBanFadedWordComponent, availableSize: CGSize, transition: ComponentTransition) -> CGSize {
++            self.label.attributedText = NSAttributedString(string: component.text, font: component.font, textColor: component.color)
++            self.label.lineBreakMode = .byTruncatingTail
++            var size = self.label.sizeThatFits(CGSize(width: availableSize.width, height: .greatestFiniteMagnitude))
++            size.width = min(ceil(size.width), availableSize.width)
++            size.height = ceil(size.height)
++
++            self.label.bounds = CGRect(origin: CGPoint(), size: size)
++            transition.setPosition(view: self.label, position: CGPoint(x: size.width / 2.0, y: size.height / 2.0))
++            transition.setScale(view: self.label, scale: component.isFaded ? WordBanFadedWordComponent.fadedScale : 1.0)
++
++            // Faded: grey at the top, gone at the bottom (the reference's gradient into the sheet's background).
++            self.maskLayer.frame = CGRect(origin: CGPoint(), size: size)
++            let topAlpha: CGFloat = component.isFaded ? 0.3 : 1.0
++            let bottomAlpha: CGFloat = component.isFaded ? 0.0 : 1.0
++            let colors = [UIColor(white: 0.0, alpha: topAlpha).cgColor, UIColor(white: 0.0, alpha: bottomAlpha).cgColor]
++            let previousColors = self.maskLayer.presentation()?.colors ?? self.maskLayer.colors
++            self.maskLayer.colors = colors
++            if case let .curve(duration, _) = transition.animation, let previousColors {
++                let animation = CABasicAnimation(keyPath: "colors")
++                animation.fromValue = previousColors
++                animation.toValue = colors
++                animation.duration = duration
++                animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
++                self.maskLayer.add(animation, forKey: "colors")
++            }
++            return size
++        }
++    }
++
++    func makeView() -> View {
++        return View(frame: CGRect())
++    }
++
++    func update(view: View, availableSize: CGSize, state: EmptyComponentState, environment: Environment<Empty>, transition: ComponentTransition) -> CGSize {
++        return view.update(component: self, availableSize: availableSize, transition: transition)
++    }
++}
++
++/// The replacement as the user types it, one character at a time: each new character springs in where it will stay,
++/// the others slide over to keep the word centred, and removed ones fade out. Every character is its own label laid
++/// out from the whole line, so a change never stretches the letters already shown.
++final class WordBanReplacementTextComponent: Component {
++    let text: String
++    let font: UIFont
++    let color: UIColor
++
++    init(text: String, font: UIFont, color: UIColor) {
++        self.text = text
++        self.font = font
++        self.color = color
++    }
++
++    static func ==(lhs: WordBanReplacementTextComponent, rhs: WordBanReplacementTextComponent) -> Bool {
++        return lhs.text == rhs.text && lhs.font == rhs.font && lhs.color.isEqual(rhs.color)
++    }
++
++    final class View: UIView {
++        private final class CharacterItem {
++            let character: Character
++            let label: UILabel
++
++            init(character: Character) {
++                self.character = character
++                self.label = UILabel()
++            }
++        }
++
++        private var items: [CharacterItem] = []
++
++        func update(component: WordBanReplacementTextComponent, availableSize: CGSize, transition: ComponentTransition) -> CGSize {
++            let characters = Array(component.text)
++
++            // Keep the characters shared with the previous text (common prefix and suffix); everything between is new.
++            var prefix = 0
++            while prefix < characters.count && prefix < self.items.count && self.items[prefix].character == characters[prefix] {
++                prefix += 1
++            }
++            var suffix = 0
++            while suffix < characters.count - prefix && suffix < self.items.count - prefix && self.items[self.items.count - 1 - suffix].character == characters[characters.count - 1 - suffix] {
++                suffix += 1
++            }
++            let removed = Array(self.items[prefix ..< (self.items.count - suffix)])
++            var inserted: [CharacterItem] = []
++            for character in characters[prefix ..< (characters.count - suffix)] {
++                inserted.append(CharacterItem(character: character))
++            }
++            self.items = Array(self.items[0 ..< prefix]) + inserted + Array(self.items[(self.items.count - suffix)...])
++
++            // Positions from the whole line, so kerning and emoji widths match the text as one string.
++            let attributedText = NSAttributedString(string: component.text, font: component.font, textColor: component.color)
++            let line = CTLineCreateWithAttributedString(attributedText)
++            let lineWidth = ceil(CTLineGetTypographicBounds(line, nil, nil, nil))
++            let height = ceil(component.font.lineHeight)
++            let scale = lineWidth > availableSize.width && lineWidth > 0.0 ? availableSize.width / lineWidth : 1.0
++            let size = CGSize(width: min(lineWidth, availableSize.width), height: height)
++
++            let reduceMotion = UIAccessibility.isReduceMotionEnabled
++            var utf16Offset = 0
++            for item in self.items {
++                let length = String(item.character).utf16.count
++                let startX = CTLineGetOffsetForStringIndex(line, utf16Offset, nil)
++                let endX = CTLineGetOffsetForStringIndex(line, utf16Offset + length, nil)
++                utf16Offset += length
++
++                let label = item.label
++                label.attributedText = NSAttributedString(string: String(item.character), font: component.font, textColor: component.color)
++                let labelSize = label.sizeThatFits(CGSize(width: CGFloat.greatestFiniteMagnitude, height: height))
++                let center = CGPoint(x: (startX + endX) / 2.0 * scale, y: height / 2.0)
++                label.bounds = CGRect(origin: CGPoint(), size: CGSize(width: ceil(labelSize.width), height: height))
++
++                if label.superview == nil {
++                    self.addSubview(label)
++                    label.center = center
++                    label.transform = CGAffineTransform(scaleX: scale, y: scale)
++                    if case .none = transition.animation {
++                    } else {
++                        // New characters follow one another by 30 ms when several arrive at once (paste).
++                        let delay = Double(inserted.firstIndex(where: { $0 === item }) ?? 0) * 0.03
++                        label.layer.animateAlpha(from: 0.0, to: 1.0, duration: 0.18, delay: delay)
++                        if !reduceMotion {
++                            label.layer.animateSpring(from: 0.4 as NSNumber, to: 1.0 as NSNumber, keyPath: "transform.scale", duration: 0.45, delay: delay, damping: 70.0)
++                            label.layer.animateSpring(from: NSValue(cgPoint: CGPoint(x: 0.0, y: height * 0.35)), to: NSValue(cgPoint: CGPoint()), keyPath: "position", duration: 0.45, delay: delay, damping: 70.0, additive: true)
++                        }
++                    }
++                } else {
++                    transition.setPosition(view: label, position: center)
++                    transition.setTransform(view: label, transform: CATransform3DMakeScale(scale, scale, 1.0))
++                }
++            }
++
++            for item in removed {
++                let label = item.label
++                if case .none = transition.animation {
++                    label.removeFromSuperview()
++                } else {
++                    label.layer.animateAlpha(from: label.alpha, to: 0.0, duration: 0.15, removeOnCompletion: false, completion: { [weak label] _ in
++                        label?.removeFromSuperview()
++                    })
++                    if !reduceMotion {
++                        label.layer.animateScale(from: 1.0, to: 0.4, duration: 0.15, removeOnCompletion: false)
++                    }
++                }
++            }
++
++            return size
++        }
++    }
++
++    func makeView() -> View {
++        return View(frame: CGRect())
++    }
++
++    func update(view: View, availableSize: CGSize, state: EmptyComponentState, environment: Environment<Empty>, transition: ComponentTransition) -> CGSize {
++        return view.update(component: self, availableSize: availableSize, transition: transition)
++    }
++}
 diff --git a/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
 new file mode 100644
-index 0000000000..00657dc144
+index 0000000000..9b917ba395
 --- /dev/null
 +++ b/submodules/TelegramUI/Components/Chat/WordBanScreen/Sources/WordBanScreen.swift
-@@ -0,0 +1,680 @@
+@@ -0,0 +1,672 @@
 +import Foundation
 +import UIKit
 +import Display
@@ -932,9 +1351,9 @@ index 0000000000..00657dc144
 +    static var body: Body {
 +        let closeButton = Child(GlassBarButtonComponent.self)
 +        let title = Child(MultilineTextComponent.self)
-+        let word = Child(MultilineTextComponent.self)
-+        let censorBar = Child(Rectangle.self)
-+        let replacementPreview = Child(MultilineTextComponent.self)
++        let word = Child(WordBanFadedWordComponent.self)
++        let censorBar = Child(WordBanCensorStripComponent.self)
++        let replacementPreview = Child(WordBanReplacementTextComponent.self)
 +        let optionSelector = Child(TabSelectorComponent.self)
 +        let info = Child(MultilineTextComponent.self)
 +        let replacementSection = Child(ListSectionComponent.self)
@@ -993,64 +1412,56 @@ index 0000000000..00657dc144
 +            )
 +            contentHeight += 44.0
 +
-+            // The word itself, large, previewing the picked option: as is, blacked out, or faded under the user's text.
++            // The word itself, large, previewing the picked option (geometry from the Figma reference): as is, under a
++            // strip of paper, or shrunk and faded under the user's text.
 +            let wordFont = Font.bold(34.0)
 +            let word = word.update(
-+                component: MultilineTextComponent(
-+                    text: .plain(NSAttributedString(string: component.word, font: wordFont, textColor: theme.list.itemPrimaryTextColor)),
-+                    horizontalAlignment: .center,
-+                    truncationType: .end,
-+                    maximumNumberOfLines: 1
++                component: WordBanFadedWordComponent(
++                    text: component.word,
++                    font: wordFont,
++                    color: theme.list.itemPrimaryTextColor,
++                    isFaded: state.option == .replace
 +                ),
 +                availableSize: CGSize(width: context.availableSize.width - textSideInset * 2.0, height: CGFloat.greatestFiniteMagnitude),
-+                transition: .immediate
++                transition: context.transition
 +            )
 +            let wordFrame = CGRect(origin: CGPoint(x: floor((context.availableSize.width - word.size.width) / 2.0), y: contentHeight), size: word.size)
 +            context.add(word
 +                .position(wordFrame.center)
-+                .opacity(state.option == .replace ? 0.3 : 1.0)
 +            )
 +
 +            if state.option == .censor {
-+                let barFrame = wordFrame.insetBy(dx: -4.0, dy: 4.0)
++                // A strip over the word's body: 17 pt on 41, its centre a little below the middle, 1.5 pt past each end.
++                let stripHeight = floor(wordFrame.height * 17.0 / 41.0)
++                let stripCenter = CGPoint(x: wordFrame.midX, y: wordFrame.minY + floor(wordFrame.height * 0.54))
 +                let censorBar = censorBar.update(
-+                    component: Rectangle(color: theme.list.itemPrimaryTextColor),
-+                    availableSize: barFrame.size,
-+                    transition: .immediate
++                    component: WordBanCensorStripComponent(color: theme.list.itemPrimaryTextColor),
++                    availableSize: CGSize(width: wordFrame.width + 3.0, height: stripHeight),
++                    transition: context.transition
 +                )
 +                context.add(censorBar
-+                    .position(barFrame.center)
-+                    .cornerRadius(4.0)
-+                    .appear(ComponentTransition.Appear { _, view, transition in
-+                        if case .none = transition.animation {
-+                            return
-+                        }
-+                        view.layer.animateScaleX(from: 0.001, to: 1.0, duration: 0.25)
-+                        view.layer.animatePosition(from: CGPoint(x: -barFrame.width / 2.0, y: 0.0), to: CGPoint(), duration: 0.25, additive: true)
-+                    })
++                    .position(stripCenter)
 +                    .disappear(.default(alpha: true))
 +                )
 +            }
 +
-+            // Replace: the user's text, as large, covers the lower half of the faded word.
++            // Replace: the user's text, as large, right over the faded word, typed in character by character.
 +            var wordAreaHeight = word.size.height
 +            if state.option == .replace {
-+                wordAreaHeight += floor(word.size.height * 0.5)
++                wordAreaHeight += 3.0
 +                if !state.replacement.isEmpty {
 +                    let replacementPreview = replacementPreview.update(
-+                        component: MultilineTextComponent(
-+                            text: .plain(NSAttributedString(string: state.replacement, font: wordFont, textColor: theme.list.itemPrimaryTextColor)),
-+                            horizontalAlignment: .center,
-+                            truncationType: .end,
-+                            maximumNumberOfLines: 1
++                        component: WordBanReplacementTextComponent(
++                            text: state.replacement,
++                            font: wordFont,
++                            color: theme.list.itemPrimaryTextColor
 +                        ),
 +                        availableSize: CGSize(width: context.availableSize.width - textSideInset * 2.0, height: CGFloat.greatestFiniteMagnitude),
-+                        transition: .immediate
++                        transition: context.transition
 +                    )
 +                    context.add(replacementPreview
-+                        .position(CGPoint(x: context.availableSize.width / 2.0, y: wordFrame.maxY))
-+                        .appear(.default(scale: true, alpha: true))
-+                        .disappear(.default(scale: true, alpha: true))
++                        .position(CGPoint(x: context.availableSize.width / 2.0, y: wordFrame.minY + 3.0 + replacementPreview.size.height / 2.0))
++                        .disappear(.default(alpha: true))
 +                    )
 +                }
 +            }
@@ -1153,7 +1564,7 @@ index 0000000000..00657dc144
 +                                        return
 +                                    }
 +                                    state.replacement = value
-+                                    state.updated(transition: .easeInOut(duration: 0.2))
++                                    state.updated(transition: .spring(duration: 0.35))
 +                                },
 +                                onReturn: { [weak state] in
 +                                    guard let state, !state.replacement.isEmpty else {

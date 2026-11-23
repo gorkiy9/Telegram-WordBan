@@ -17,16 +17,18 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 - The word, large, previewing the choice below it.
 - A horizontal selector of how messages show it, **Visible** by default:
   - **Visible**: the word is not banned; there is no ban button (for a banned word, the button lifts the ban);
-  - **Censored**: a solid bar covers the word, as a censor would strike it out;
-  - **Replace**: a field for your own text or emoji. The word fades, and what you type covers its lower half.
+  - **Censored**: a strip of paper is pressed over the word from left to right, its free end lifted and bending
+    until it lies flat, slightly tilted, with a soft shadow;
+  - **Replace**: a field for your own text or emoji. The word shrinks and fades downwards, and what you type appears
+    over it character by character, without stretching the letters already shown.
 - Once Censored or Replace is picked, **Ban Word** appears at the bottom and, to its right, how long the ban lasts:
   1 Day, 1 Week, 1 Month, 3 Months, 6 Months, 1 Year or Forever.
 - After the ban, a toast with Undo.
 
 ### 3. Messages with a banned word
 
-- Every incoming message in the chat with the word (whole word, any case) blacks it out or replaces it at once, old
-  messages included.
+- Every incoming message in the chat with the word (whole word, any case) covers it with the same strip or replaces
+  it at once, old messages included; strips on messages already on screen are pressed on with the same motion.
 - The message's status line says **banned word**, next to the time, the way it says "edited".
 - The message's context menu has **Show Word** (for this message; **Hide Word** puts it back) and **Unban "word"**.
 
@@ -55,7 +57,7 @@ Long-press an incoming message, select the word, and choose **Ban a Word** in th
 ## Applying the change
 
 `changes.patch` is the difference from the official Telegram-iOS master at commit `24638bc69b` (Telegram 13.2). From a
-checkout of that commit (25 files, +1 488 −5):
+checkout of that commit (27 files, +1 887 −5):
 
 ```
 git apply --check changes.patch
